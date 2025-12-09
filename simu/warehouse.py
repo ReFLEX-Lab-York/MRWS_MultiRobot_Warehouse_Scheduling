@@ -414,7 +414,7 @@ class Warehouse:
                             continue
                     came_from[neigh_tup] = cur_tup
                     g_scores[neigh_tup] = possible_g_score
-                    f_scores[neigh_tup] = possible_g_score + utils.taxicab_dist(current.x, current.y+1,
+                    f_scores[neigh_tup] = possible_g_score + utils.taxicab_dist(current.x, current.y,
                                                                                 target_x, target_y)
                     if PrioNode(n[0], n[1], 0) not in search_frontier:
                         heapq.heappush(search_frontier,
