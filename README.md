@@ -1,11 +1,11 @@
-# RobotWarehouse
-A python simulator for a robotic smart warehouse, with many configurable properties.
+# MRWS: A MultiRobot Warehouse Simulator
+A Python simulator for a robotic smart warehouse, with many configurable properties. The aim is to develop and evaluate various path planning, scheduling and allocation algorithms.
 
 ## Project Structure
 
-- doc/: documentations
-- simu/: simulator (Python)
-- viz/: visualisor (Unity)
+- `doc/`: documentations
+- `simu/`: simulator (Python)
+- `viz/`: visualisor (Unity)
 
 ## Requirements
 
