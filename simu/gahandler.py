@@ -70,15 +70,15 @@ def is_schedule_complete(schedule):
         return True
     return False
 
+class MockRobot(entitywithinventory.InventoryEntity):
+    def __init__(self, name, inv_size):
+        super().__init__(name, inv_size, False)
+
+class MockGoal(entitywithinventory.InventoryEntity):
+    def __init__(self, name):
+        super().__init__(name, math.inf, False)
+
 def fitness_func(ga_instance, solution, solution_idx):
-    class MockRobot(entitywithinventory.InventoryEntity):
-        def __init__(self, name, inv_size):
-            super().__init__(name, inv_size, False)
-
-    class MockGoal(entitywithinventory.InventoryEntity):
-        def __init__(self, name):
-            super().__init__(name, math.inf, False)
-
     PENALTY_SAME_ROBOT_MULTIPLE_TIMES = -2
     PENALTY_NO_START_WITH_ROBOT = -3
     PENALTY_NO_ROBOT = -3
@@ -304,6 +304,4 @@ class GAHandler:
                 return self._distance_graph[(name2, name1)]
         else:
             return self._distance_graph[(name1, name2)]
-
-
 

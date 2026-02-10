@@ -131,7 +131,6 @@ def gen_nxn_warehouse(robot_num, side_len):
     robots_left_to_place = robot_num
     goals_left_to_place = robot_num
     filename = "wt%sx%sr%s.txt" % (side_len, side_len, robot_num)
-    f = open(filename, "a")
 
     lines = []
 
@@ -182,10 +181,9 @@ def gen_nxn_warehouse(robot_num, side_len):
     lines[middle_index] = lines[middle_index][0] + spacing + "SSXSS" + spacing + lines[middle_index][-2] + "\n"
     lines[one_below] = lines[one_below][0] + spacing + "SSXSS" + spacing + lines[one_below][-2] + "\n"
 
-    for line in lines:
-        f.write(line)
-
-    f.close()
+    with open(filename, "a") as f:
+        for line in lines:
+            f.write(line)
 
     return filename
 
@@ -371,10 +369,6 @@ if __name__ == "__main__":
 
     sim.run_simulation(True,True)
     #sim.print_priority_info()
-
-
-
-
 
 
 

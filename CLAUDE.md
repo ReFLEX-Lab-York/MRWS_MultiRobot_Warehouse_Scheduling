@@ -1,0 +1,107 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+MRWS (MultiRobot Warehouse Simulator) is a Python simulator for robotic smart warehouses. It supports multiple scheduling/allocation algorithms and can visualize simulations via a Unity client.
+
+## Running the Simulator
+
+```bash
+cd simu
+python main.py           # Run simulation without visualization
+python main.py -t        # Run with UDP transmission to Unity visualizer
+```
+
+The `-t` flag sets `ROBOTSIM_TRANSMIT=True` in the environment, which `udptransmit.py` checks before sending any UDP packets. The `slow_for_transmit` parameter in `run_simulation()` adds 200ms delays between steps for visualization.
+
+There are no tests, linting, or formatting tools configured.
+
+## Key Architecture
+
+### Simulation Entry Point (`main.py`)
+
+`Simulation` is the top-level runner. It takes: number of sims, warehouse file, number of items, robot inventory size, scheduling mode, fault rates (list of 4 floats), fault tolerance flag, and step limit. The `__main__` block configures and runs a single simulation with `whouse2.txt`.
+
+Helper functions (`run_completion_time_test`, `run_fault_test`, `run_simulation_performance_test`) run batch experiments and plot results with matplotlib.
+
+### Core Simulation Loop
+
+The simulation runs in discrete time steps managed by `Warehouse.step()`:
+1. Each robot: apply faults, decide action (pathfind via A*, interact with target, or wait for scheduler), move
+2. Possibly introduce a dynamic order (before the `dynamic_deadline` step)
+3. Returns `True` when all orders are complete and past the dynamic deadline
+
+### Coordinate System
+
+Warehouse cell `(x,y)` is accessed via `self._cells[y][x]`. The file is parsed bottom-up (`reversed(lines)`), so `y=0` corresponds to the last line in the warehouse file. Each cell is a list of entity name strings (e.g., `["robot0", "home0"]`).
+
+### Entity Naming and Interaction
+
+Entities are named sequentially: `robot0`, `robot1`, `shelf0`, `shelf1`, `goal0`, `home0`, `item0`, etc. The `homeN` always corresponds to `robotN` (used by `get_home_name_for_robot_name`).
+
+All interactable entities (`Shelf`, `OrderStation`, `RobotHome`) implement an `interact(obj)` method called when a robot arrives at their position. Shelves give items, order stations receive inventory and check for order completion, homes handle charging/clearing.
+
+### Inventory and Item Dependencies
+
+`InventoryEntity` is a base class (used by `Robot`, `OrderStation`, and GA's `MockRobot`/`MockGoal`) implementing a LIFO stack inventory. Items have a dependency number, and **items must be added in decreasing dependency order**. This constraint drives the scheduling logic — items are sorted by dependency (highest first) when building schedules.
+
+### Scheduling Modes
+
+Four scheduling algorithms in `Scheduler`:
+- `simple`: One robot per order, FIFO assignment
+- `simple-interrupt`: One robot with priority-based preemption (can steal a lower-priority robot mid-task)
+- `multi-robot`: Multiple robots per order when enough are free; falls back to single-robot
+- `multi-robot-genetic`: Uses `pygad` GA to optimize multi-robot schedules via `gahandler.py`
+
+### Schedule Format
+
+Robot schedules are lists of string targets: `"shelf3"`, `"goal0"`, `"home1"`. Pipe-delimited modifiers encode extra behavior:
+- `"goal0|3"` — deliver exactly 3 items (for interrupted schedules)
+- `"goal0|flag5"` — set flag after delivery (multi-robot synchronization)
+- `"block|flag5"` — wait until flag is set before proceeding
+- `"wait"` — idle (used in GA gene space)
+
+### Genetic Algorithm (`gahandler.py`)
+
+`GAHandler` is a singleton that bridges the `Scheduler` and `pygad`. Gene encoding converts entity name strings to/from integers via UTF-8 byte representation. The fitness function (`fitness_func`) runs a simplified simulation with `MockRobot`/`MockGoal` objects to evaluate candidate schedules without the full warehouse.
+
+### Fault Tolerance
+
+Four fault types with configurable rates (list of 4 floats: `[battery_critical, battery_low, actuator, sensor]`):
+- **Battery critical**: Permanent failure (infinite wait)
+- **Battery low**: Must return home, charge for 50 steps
+- **Actuator**: Temporary 20-step halt
+- **Sensor**: Robot ignores collision detection, 2-step halt
+
+When `fault_tolerant_mode=True`, the scheduler calls `reassign_orders_if_faulted()` to generate replacement orders for remaining undelivered items.
+
+### Deadlock Resolution
+
+`Warehouse` handles three deadlock scenarios:
+1. **Blocked path**: Robot recomputes A* path around obstacles after waiting
+2. **Head-on collision**: Lower-priority robot moves aside (perpendicular)
+3. **Cyclic deadlock**: Detected by following robot-target chains; broken by priority
+
+### Visualization Protocol
+
+UDP JSON messages sent to Unity on `127.0.0.1:35891` via `udptransmit.py`. Only transmits when `ROBOTSIM_TRANSMIT` env var is `"True"`.
+
+### Warehouse File Format
+
+Text files where each character represents a cell:
+- `R`: Robot (and its home position)
+- `S`: Shelf with item
+- `G`: Order station (goal)
+- `X`: Empty/traversable cell
+- `W`: Wall
+
+Two warehouse files exist: `whouse.txt` and `whouse2.txt`.
+
+## Dependencies
+
+- Python >= 3.11
+- pygad (genetic algorithm library)
+- matplotlib (for result visualization)
+- Unity 6000.0.41f1 (for viz component, in `viz/` directory)

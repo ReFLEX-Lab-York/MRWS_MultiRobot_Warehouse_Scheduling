@@ -478,10 +478,9 @@ class Warehouse:
         cells_copy = []
         lines = []
 
-        f = open(filename, "r")
-        for line_raw in f:
-            lines.append(line_raw.strip())
-        f.close()
+        with open(filename, "r") as f:
+            for line_raw in f:
+                lines.append(line_raw.strip())
 
         for line in list(reversed(lines)):
             width = len(line)
@@ -519,7 +518,10 @@ class Warehouse:
                     shelf_name_ctr = shelf_name_ctr + 1
                 elif char == "G":
                     new_goal_name = "goal%s" % goal_name_ctr
-                    new_goal = orderstation.OrderStation(col_ctr, row_ctr, new_goal_name, self)
+                    new_goal = orderstation.OrderStation(col_ctr, row_ctr, new_goal_name,
+                                                        lambda: self._scheduler,
+                                                        lambda: self._order_manager,
+                                                        lambda: self._total_steps)
                     self._order_stations[new_goal_name] = new_goal
 
                     cells_copy[row_ctr].append([new_goal_name])
@@ -558,7 +560,3 @@ class Warehouse:
         self._cells[old_y][old_x].remove(robot_name)
         self._cells[new_y][new_x].append(robot_name)
         udptransmit.transmit_robot_position(robot_name, new_x, new_y)
-
-
-
-

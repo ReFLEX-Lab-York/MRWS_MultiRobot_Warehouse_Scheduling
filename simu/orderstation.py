@@ -5,10 +5,12 @@ import math
 
 
 class OrderStation(entitywithinventory.InventoryEntity):
-    def __init__(self, x_pos: int, y_pos: int, name: str, warehouse):
+    def __init__(self, x_pos: int, y_pos: int, name: str, get_scheduler, get_order_manager, get_total_steps):
         self._x = x_pos
         self._y = y_pos
-        self._warehouse_ref = warehouse
+        self._get_scheduler = get_scheduler
+        self._get_order_manager = get_order_manager
+        self._get_total_steps = get_total_steps
         super().__init__(name, math.inf)
 
     def transmit_creation(self):
@@ -21,17 +23,16 @@ class OrderStation(entitywithinventory.InventoryEntity):
         #print("Already had %s" % self._inventory)
         self.receive_inventory(received)
 
-        if self._warehouse_ref.get_scheduler().is_this_a_complete_order(self.report_inventory(),
-                                                                        self._warehouse_ref.get_order_manager(),
-                                                                        obj,
-                                                                        self._name,
-                                                                        self._warehouse_ref.get_total_steps()):
+        if self._get_scheduler().is_this_a_complete_order(self.report_inventory(),
+                                                          self._get_order_manager(),
+                                                          obj,
+                                                          self._name,
+                                                          self._get_total_steps()):
             self.clear_inventory()
-
 
         flag_maybe = obj.consume_flag()
         if flag_maybe is not None:
-            self._warehouse_ref.get_scheduler().add_flag(flag_maybe)
+            self._get_scheduler().add_flag(flag_maybe)
 
     def get_position(self):
         return self._x, self._y

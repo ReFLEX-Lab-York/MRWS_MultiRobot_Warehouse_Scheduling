@@ -37,7 +37,7 @@ class Scheduler:
             if item_name not in self._item_to_shelf_mapping.keys():
                 self._item_to_shelf_mapping[item_name] = [shelf_name]
             else:
-                self._item_to_shelf_mapping[item_name] = self._item_to_shelf_mapping[item_name].append(shelf_name)
+                self._item_to_shelf_mapping[item_name].append(shelf_name)
 
         self._goals = goals
         self._flags = []
@@ -928,10 +928,6 @@ class Scheduler:
         #ga_instance.plot_fitness()
 
         return solution_fitness, flat_schedule
-
-
-
-
 
 
 
