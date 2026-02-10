@@ -127,62 +127,64 @@ class Simulation:
         return [self.num_robots, self._side_len, statistics.mean(self.step_times) / 10**6]
 
 
-def gen_nxn_warehouse(robot_num, side_len):
-    robots_left_to_place = robot_num
-    goals_left_to_place = robot_num
+def gen_nxn_warehouse(robot_num, side_len, num_items=12):
     filename = "wt%sx%sr%s.txt" % (side_len, side_len, robot_num)
 
-    lines = []
+    # Build grid as 2D list of characters, all empty initially
+    grid = [['X'] * side_len for _ in range(side_len)]
 
-    if robots_left_to_place <= side_len - 2:
-        robot_section = ["R" for i in range(robots_left_to_place)]
-        left_section = ["X" for i in range(side_len - 2 - robots_left_to_place)]
-        middle_section = ''.join(robot_section) + ''.join(left_section)
-        robots_left_to_place = 0
-    else:
-        middle_section = ''.join(["R" for i in range(side_len - 2)])
-        robots_left_to_place = robots_left_to_place - (side_len - 2)
+    # Place robots in top rows, filling row by row (cols 1..side_len-2)
+    robots_placed = 0
+    usable_cols = side_len - 2  # leave first and last column free
+    robot_rows_needed = math.ceil(robot_num / usable_cols)
+    for r in range(robot_rows_needed):
+        for c in range(1, side_len - 1):
+            if robots_placed >= robot_num:
+                break
+            grid[r][c] = 'R'
+            robots_placed += 1
 
-    first_line = "X%sX\n" % middle_section
+    if robots_placed < robot_num:
+        raise Exception("Not enough space for %s robots in a %sx%s warehouse" % (robot_num, side_len, side_len))
 
+    # Place goals in bottom rows, filling row by row from the bottom (cols 1..side_len-2)
+    goals_placed = 0
+    goals_needed = max(robot_num, 1)
+    goal_rows_needed = math.ceil(goals_needed / usable_cols)
+    for r in range(goal_rows_needed):
+        row_idx = side_len - 1 - r
+        for c in range(1, side_len - 1):
+            if goals_placed >= goals_needed:
+                break
+            grid[row_idx][c] = 'G'
+            goals_placed += 1
 
-    if goals_left_to_place <= side_len - 2:
-        goal_section = ["G" for i in range(goals_left_to_place)]
-        left_section = ["X" for i in range(side_len - 2 - goals_left_to_place)]
-        middle_section = ''.join(goal_section) + ''.join(left_section)
-        goals_left_to_place = 0
-    else:
-        middle_section = ''.join(["G" for i in range(side_len - 2)])
-        goals_left_to_place = goals_left_to_place - (side_len - 2)
+    # Interior region for shelves: between robot rows and goal rows
+    shelf_start_row = robot_rows_needed + 1  # +1 for corridor
+    shelf_end_row = side_len - 1 - goal_rows_needed - 1  # -1 for corridor
 
-    last_line = "X%sX" % middle_section
+    # Place shelves in alternating columns (shelf column, corridor column)
+    shelves_placed = 0
+    for c in range(2, side_len - 2):
+        if shelves_placed >= num_items:
+            break
+        # Alternating: even offset columns get shelves, odd are corridors
+        if (c - 2) % 2 != 0:
+            continue
+        for r in range(shelf_start_row, shelf_end_row + 1):
+            if shelves_placed >= num_items:
+                break
+            grid[r][c] = 'S'
+            shelves_placed += 1
 
-    lines.append(first_line)
+    if shelves_placed < num_items:
+        raise Exception("Not enough space for %s shelves in a %sx%s warehouse" % (num_items, side_len, side_len))
 
-    for i in range(side_len - 2):
-        line = ''.join(["X" for i in range(side_len)]) + "\n"
-        lines.append(line)
-
-    lines.append(last_line)
-
-    for i in range(robots_left_to_place):
-        lines[i+1] = "R" + lines[i+1][1:]
-        lines[len(lines) - 2 - i] = lines[len(lines) - 2 - i][:-2] + "G\n"
-        if i+1 == side_len - 1:
-            raise Exception("not enough space for that amount of robots")
-
-    middle_index = ((side_len + 1) // 2) - 1
-    one_above = middle_index - 1
-    one_below = middle_index + 1
-
-    spacing = ''.join(["X" for i in range((side_len - 7) // 2)])
-
-    lines[one_above] = lines[one_above][0] + spacing + "SSXSS" + spacing + lines[one_above][-2] + "\n"
-    lines[middle_index] = lines[middle_index][0] + spacing + "SSXSS" + spacing + lines[middle_index][-2] + "\n"
-    lines[one_below] = lines[one_below][0] + spacing + "SSXSS" + spacing + lines[one_below][-2] + "\n"
-
-    with open(filename, "a") as f:
-        for line in lines:
+    with open(filename, "w") as f:
+        for r in range(side_len):
+            line = ''.join(grid[r])
+            if r < side_len - 1:
+                line += "\n"
             f.write(line)
 
     return filename
@@ -201,7 +203,7 @@ def run_simulation_performance_test(scheduling_mode:str, robots_max:int, size_ma
         by_sim_size.append([])
         for j in range(1, robots_max+1):
             print("starting %s %s" % (j, i))
-            file_name = gen_nxn_warehouse(j, i)
+            file_name = gen_nxn_warehouse(j, i, 12)
             sim_1 = Simulation(10, file_name, 12, 3, scheduling_mode,
                      [0, 0, 0, 0], True, step_limit, i)
             sim_1.run_simulation(False, False)
@@ -356,6 +358,16 @@ def run_fault_test(scheduling_mode):
 
 
 
+def run_1000_robot_test():
+    os.environ["ROBOTSIM_TRANSMIT"] = "False"
+    fname = gen_nxn_warehouse(1000, 200, 1000)
+    sim = Simulation(1, fname, 1000, 3, "multi-robot",
+                     [0, 0, 0, 0], True, 5000)
+    t = time.time()
+    sim.run_simulation(True, False)
+    print("1000-robot sim completed in %.1fs" % (time.time() - t))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", action="store_true", help="Whether or not to transmit UDP packets.")
@@ -367,8 +379,7 @@ if __name__ == "__main__":
     sim = Simulation(1, "whouse2.txt", 10, 3, "simple-interrupt",
                      perfect_scenario, True, 1000)
 
-    sim.run_simulation(True,True)
-    #sim.print_priority_info()
+    sim.run_simulation(True, args.t)
 
 
 

@@ -1,5 +1,6 @@
 import copy
 import math
+from collections import deque, Counter
 
 
 import customexceptions
@@ -53,11 +54,16 @@ class Scheduler:
         self._order_robots_assignment = {}
         self._order_goal_assignment = {}
 
+        # 2B: Track assigned robots for O(1) free robot lookup
+        self._assigned_robots = set()
+
+        # 2F: Reverse mapping robot_name -> order_id
+        self._robot_to_order = {}
+
         self._schedule = {}
 
         self._all_positions = {}
         self._all_genes = []
-        self._all_distances = {}
 
         self._mr_flag_ctr = 0
 
@@ -73,39 +79,17 @@ class Scheduler:
             self._all_positions[goal_name] = goal_obj.get_position()
             self._all_genes.append(goal_name)
 
-        self.recalculate_distances()
-
     def get_ga_attempts(self):
         return self._ga_attempts
 
-    def recalculate_distances(self):
+    def _update_robot_positions(self):
         for robot_name, robot_obj in self._robots.items():
             self._all_positions[robot_name] = robot_obj.get_position()
-
-        for location1 in self._all_positions.keys():
-            for location2 in self._all_positions.keys():
-                if (location2, location1) not in self._all_distances.keys():
-                    if (((location1, location2) not in self._all_distances.keys()) or
-                            ("robot" in location1) or ("robot" in location2)):
-                        if location1 != location2:
-                            x1 = self._all_positions[location1][0]
-                            y1 = self._all_positions[location1][1]
-
-                            x2 = self._all_positions[location2][0]
-                            y2 = self._all_positions[location2][1]
-
-                            self._all_distances[(location1, location2)] = utils.taxicab_dist(x1,y1,x2,y2)
 
     def add_flag(self, flag: str):
         self._flags.append(flag)
 
     def schedule(self, step_value):
-        #print("SCHEDULING")
-        #print("The current backlog is %s" % self._orders_backlog)
-        #print("The current active is %s" % self._orders_active)
-        #print("The current robot assignment is %s" % self._order_robots_assignment)
-        #print("The current goal assignment is %s" % self._order_goal_assignment)
-
         new_orders = []
         if self._schedule_mode == "simple":
             new_orders = self.simple_single_robot_schedule(self._fault_tolerant_mode)
@@ -119,11 +103,6 @@ class Scheduler:
         for order_obj in new_orders:
             self._order_manager_ref.set_order_start_work_time(order_obj.get_id(), step_value)
 
-        #print("AFTER SCHEDULING")
-        #print("After, the current backlog is %s" % self._orders_backlog)
-        #print("After, the current active is %s" % self._orders_active)
-        #print("After, The current robot assignment is %s" % self._order_robots_assignment)
-        #print("After, The current goal assignment is %s" % self._order_goal_assignment)
     def get_items_already_delivered_for_order(self, order_id):
         order_goal_name = self._order_goal_assignment[order_id]
         order_goal = self._goals[order_goal_name]
@@ -132,6 +111,14 @@ class Scheduler:
     def get_order_to_amount_of_robots_assigned(self):
         return self._order_to_amount_robots_assigned
 
+    def _assign_robot_to_order(self, robot_name, order_id):
+        self._assigned_robots.add(robot_name)
+        self._robot_to_order[robot_name] = order_id
+
+    def _unassign_robot(self, robot_name):
+        self._assigned_robots.discard(robot_name)
+        self._robot_to_order.pop(robot_name, None)
+
     def reassign_orders_if_faulted(self):
         orders_to_remove = []
         orders_to_add = []
@@ -139,7 +126,7 @@ class Scheduler:
             if len(robot_names) == 1:
                 robot_obj = self._robots[robot_names[0]]
                 if robot_obj.battery_faulted_critical or robot_obj.battery_faulted:
-                    self._schedule[robot_names[0]] = []
+                    self._schedule[robot_names[0]] = deque()
                     order_to_remove, new_order = self.generate_order_to_complete_fault(order_id)
 
                     orders_to_remove.append(order_to_remove)
@@ -157,20 +144,23 @@ class Scheduler:
                     if not robot_obj.battery_faulted_critical and not robot_obj.battery_faulted:
                         non_faulted_bots.append(robot_name)
                     else:
-                        self._schedule[robot_name] = []
+                        self._schedule[robot_name] = deque()
                 if len(critical_battery_fault_bots) > 0 or len(battery_charge_bots) > 0:
                     for robot_name in non_faulted_bots:
                         robot_obj = self._robots[robot_name]
                         robot_obj.gone_home_to_clear_inv = True
                         robot_obj.set_target(self._homes[self.get_home_name_for_robot_name(robot_obj.get_name())])
-                        self._schedule[robot_obj.get_name()] = []
+                        self._schedule[robot_obj.get_name()] = deque()
                         order_to_remove, new_order = self.generate_order_to_complete_fault(order_id)
 
                         orders_to_remove.append(order_to_remove)
                         orders_to_add.append(new_order)
 
         for order_obj in orders_to_remove:
-            self._order_robots_assignment.pop(order_obj.get_id())
+            removed_order_id = order_obj.get_id()
+            removed_robots = self._order_robots_assignment.pop(removed_order_id)
+            for rn in removed_robots:
+                self._unassign_robot(rn)
             self._orders_active.remove(order_obj)
 
         for order_obj in orders_to_add:
@@ -277,11 +267,9 @@ class Scheduler:
                             found_lower_prio_robot_name = robot_names[0]
 
                 if found_lower_prio_robot_name is not None:
-                    #print("Order ID is %s" % order_obj.get_id())
-                    #print("New goal is %s" % free_goal_obj.get_name())
                     selected_bot = self._robots[found_lower_prio_robot_name]
-                    #print(selected_bot.get_inventory_usage())
                     self._order_robots_assignment[order_obj.get_id()] = [found_lower_prio_robot_name]
+                    self._assign_robot_to_order(found_lower_prio_robot_name, order_obj.get_id())
                     selected_bot.set_prio(order_obj.get_prio())
                     self._order_goal_assignment[order_obj.get_id()] = free_goal_obj.get_name()
 
@@ -305,7 +293,6 @@ class Scheduler:
 
                     self.prepend_to_schedule(found_lower_prio_robot_name, prepend_schedule)
 
-                    #print("Interruption schedule complete for robot %s is %s" % (found_lower_prio_robot_name, self._schedule[found_lower_prio_robot_name]))
                     orders_to_move.append(order_obj)
 
         for ordr in orders_to_move:
@@ -334,7 +321,10 @@ class Scheduler:
                 item_names_split_by_bots = []
 
                 self._order_goal_assignment[order_obj.get_id()] = free_goal_obj.get_name()
-                self._order_robots_assignment[order_obj.get_id()] = list(map(lambda r: r.get_name(), selected_robots))
+                robot_name_list = list(map(lambda r: r.get_name(), selected_robots))
+                self._order_robots_assignment[order_obj.get_id()] = robot_name_list
+                for rn in robot_name_list:
+                    self._assign_robot_to_order(rn, order_obj.get_id())
 
                 for robot_obj in selected_robots:
                     robot_obj.set_assigned_order(order_obj.get_id())
@@ -380,18 +370,17 @@ class Scheduler:
             self._orders_backlog.remove(ordr)
             self._orders_active.append(ordr)
 
-        #print("multi robot scheduling completed.")
-        #print("goal assignment %s" % self._order_goal_assignment)
-        #print("robot assignment %s" % self._order_robots_assignment)
-        #print("active orders %s" % self._orders_active)
-        #for robot_name in self._robots.keys():
-            #print("Robot %s: %s" % (robot_name, self._schedule[robot_name]))
         return orders_to_move
 
     def multi_robot_schedule_genetic(self, fault_tolerant_mode):
         # spaghetti alert
         if fault_tolerant_mode:
             self.reassign_orders_if_faulted()
+
+        # Phase 3: GA scaling guard — fall back when too many free robots
+        free_robots_check = self.find_free_robots(fault_tolerant_mode)
+        if len(free_robots_check) > 50:
+            return self.multi_robot_schedule_simple(fault_tolerant_mode)
 
         orders_to_move = []
         for order_obj in reversed(sorted(self._orders_backlog, key=lambda order1: order1.get_prio())):
@@ -406,13 +395,10 @@ class Scheduler:
                     self._ga_attempts[try_counter] += 1
                     break
                 else:
-                    #print("That solution wasnt good enough")
                     try_counter += 1
             if fitness < 1:
                 raise customexceptions.SimulationError("Couldnt find a solution with the genetic algorithm")
-            #print("Entering for order %s" % order_obj.get_id())
 
-            #("Genetic schedule %s" % schedule)
             split_indices = []
             seperate_schedules = []
             selected_goal = None
@@ -443,6 +429,8 @@ class Scheduler:
 
             # Set the order assignment
             self._order_robots_assignment[order_obj.get_id()] = selected_robots
+            for rn in selected_robots:
+                self._assign_robot_to_order(rn, order_obj.get_id())
             self._order_goal_assignment[order_obj.get_id()] = selected_goal
 
             # These are the individual pickup trips of each robot.
@@ -462,14 +450,11 @@ class Scheduler:
                         pickups.append([robot_name, current_items])
                         current_items = []
 
-            #print(pickups)
             if len(pickups) > 1:
 
                 # Sort the pickups by the max item dependency found in each, largest goes first in the list.
                 pickups = list(reversed(sorted(pickups, key=lambda outer: max(list(map(lambda inner: inner.get_dependency(),
                                                                                   outer[1]))))))
-
-                #print(pickups)
 
                 # However, we also need to make sure that the minimum in each list is sorted by too, if two elements
                 # have the same maximum.
@@ -491,9 +476,6 @@ class Scheduler:
                         pickups[i] = next_value
                         pickups[i+1] = temp_value
 
-                #print("final")
-                #print(pickups)
-
             # The pickups list is now sorted correctly into the order in which the pickups have to happen,
             # to fulfill the item dependency.
 
@@ -505,7 +487,6 @@ class Scheduler:
             # Now we need to figure out where to insert the blocks
             last_robot_name = None
             for item_obj in reversed(sorted(order_obj.get_items(), key= lambda i: i.get_dependency())):
-                #print("considering item %s" % item_obj)
                 current_sublist = pickups[0]
                 current_robot_name = current_sublist[0]
                 current_item_list = current_sublist[1]
@@ -563,14 +544,7 @@ class Scheduler:
                 current_item_list.remove(item_obj)
                 if len(current_item_list) == 0:
                     pickups.pop(0)
-                #print(pickups)
                 last_robot_name = current_robot_name
-
-            #print("The robot visit order must be %s" % robot_visit_order)
-            #print("The order was %s" % order_obj.get_items())
-            #print("Blocks to insert are %s" % blocks_to_insert)
-            #print("Flags to insert are %s" % flags_to_add_on_goals)
-            #print(original_schedule)
 
             for robot_name, schedule_list in seperate_schedules_dict.items():
                 loc_ctr = 0
@@ -594,8 +568,6 @@ class Scheduler:
                             self.add_to_schedule(robot_name, location)
                     loc_ctr += 1
 
-                #print("Added schedule for robot %s: %s" % (robot_name, self._schedule[robot_name]))
-            #print("FOR ORDER %s" % order_obj.get_id())
             orders_to_move.append(order_obj)
 
         for ordr in orders_to_move:
@@ -613,13 +585,7 @@ class Scheduler:
                 # Check if the robot has critically faulted
                 if robot.battery_faulted_critical or robot.battery_faulted or robot.gone_home_to_clear_inv:
                     continue
-            # Check whether there is a free robot to take the order
-            robot_already_used = False
-            for assignment in self._order_robots_assignment.values():
-                if robot_name in assignment:
-                    robot_already_used = True
-
-            if not robot_already_used:
+            if robot_name not in self._assigned_robots:
                 free_robots.append(robot)
         return free_robots
 
@@ -629,7 +595,6 @@ class Scheduler:
         if (order_obj.get_id() in self._order_goal_assignment.keys() and order_obj.get_id()
                 not in self._order_robots_assignment.keys()):
             goal_name = self._order_goal_assignment[order_obj.get_id()]
-            #print("preserving goal for order %s" % order_obj.get_id())
             # Then we can use the same goal again
             free_goal_obj = self._goals[goal_name]
         else:
@@ -647,11 +612,10 @@ class Scheduler:
         robot_name = robot_obj.get_name()
         goal_name = goal_obj.get_name()
         self._order_robots_assignment[order_obj.get_id()] = [robot_name]
+        self._assign_robot_to_order(robot_name, order_obj.get_id())
         self._order_goal_assignment[order_obj.get_id()] = goal_name
 
         robot_obj.set_prio(order_obj.get_prio())
-        #print("order %s assigned to robot %s" % (order_obj.get_id(), robot_name))
-        #print("using goal %s" % goal_name)
 
         robot_inventory_used = 0
 
@@ -676,20 +640,17 @@ class Scheduler:
                 self.add_to_schedule(robot_name, shelf_name)
                 self.add_to_schedule(robot_name, goal_name)
 
-        #print("its complete schedule is %s" % self._schedule[robot_name])
-
-
-
 
     def add_to_schedule(self, robot_name, target_name):
-        if robot_name not in self._schedule.keys():
-            self._schedule[robot_name] = []
+        if robot_name not in self._schedule:
+            self._schedule[robot_name] = deque()
         self._schedule[robot_name].append(target_name)
 
     def prepend_to_schedule(self, robot_name, targets_list):
-        if robot_name not in self._schedule.keys():
-            self._schedule[robot_name] = []
-        self._schedule[robot_name] = targets_list + self._schedule[robot_name]
+        if robot_name not in self._schedule:
+            self._schedule[robot_name] = deque()
+        for item in reversed(targets_list):
+            self._schedule[robot_name].appendleft(item)
 
     def add_order(self, order, step_value):
         self._orders_backlog.append(order)
@@ -697,22 +658,22 @@ class Scheduler:
 
     def direct_robot(self, robot_obj):
         robot_name = robot_obj.get_name()
-        if robot_name in self._schedule.keys():
+        if robot_name in self._schedule:
             # We shouldn't do anything if the scheduler has nothing more for this robot
             if self._schedule[robot_name]:
-                #print("my schedule was %s" % self._schedule[robot_name])
-                robot_next_target_name = self._schedule[robot_name].pop(0)
-                #print("popping %s" % robot_next_target_name)
+                robot_next_target_name = self._schedule[robot_name].popleft()
                 robot_next_target_obj = self.parse_schedule_value(robot_next_target_name, robot_obj)
                 robot_obj.set_target(robot_next_target_obj)
             else:
-                for robot_assignment in self._order_robots_assignment.values():
+                # 2F: Use reverse mapping for O(1) lookup
+                order_id = self._robot_to_order.get(robot_name)
+                if order_id is not None and order_id in self._order_robots_assignment:
+                    robot_assignment = self._order_robots_assignment[order_id]
                     if robot_name in robot_assignment:
                         robot_assignment.remove(robot_name)
-                        # homeN is robotN's home
-                #print("setting %s to return home" % robot_name)
+                self._unassign_robot(robot_name)
                 selected_home = self._homes[self.get_home_name_for_robot_name(robot_name)]
-                self._schedule[robot_name] = [selected_home.get_name()]
+                self._schedule[robot_name] = deque([selected_home.get_name()])
 
     def parse_schedule_value(self, robot_next_target_name, robot_obj):
         robot_next_target_obj = None
@@ -741,7 +702,7 @@ class Scheduler:
             flag_name = split[1]
 
             if flag_name in self._flags:
-                robot_next_target_obj = self.parse_schedule_value(self._schedule[robot_obj.get_name()].pop(0), robot_obj)
+                robot_next_target_obj = self.parse_schedule_value(self._schedule[robot_obj.get_name()].popleft(), robot_obj)
             else:
                 robot_next_target_obj = self._homes[self.get_home_name_for_robot_name(robot_obj.get_name())]
                 self.prepend_to_schedule(robot_obj.get_name(), [robot_next_target_name])
@@ -766,27 +727,24 @@ class Scheduler:
         return True
 
     def is_this_a_complete_order(self, items: list, order_manager: ordermanager.OrderManager, robot_obj, goal_name, step_ctr):
-        for order in self._orders_active:
-            comp_items = copy.deepcopy(items)
-            should_continue = False
-            for order_item in order.get_original_items():
-                if order_item not in comp_items:
-                    should_continue = True
-                    break
-                else:
-                    comp_items.remove(order_item)
+        # 2E: Use Counter for O(A*I) matching instead of deepcopy + O(A*I²) list matching
+        items_counter = Counter(i.get_name() for i in items)
 
-            if should_continue:
+        for order in self._orders_active:
+            order_items = order.get_original_items()
+            order_counter = Counter(i.get_name() for i in order_items)
+
+            if order_counter != items_counter:
                 continue
 
-            if len(comp_items) == 0 and robot_obj.get_name() in self._order_robots_assignment[order.get_id()] and goal_name == self._order_goal_assignment[order.get_id()]:
+            if robot_obj.get_name() in self._order_robots_assignment[order.get_id()] and goal_name == self._order_goal_assignment[order.get_id()]:
 
                 self._orders_active.remove(order)
 
                 robots = self._order_robots_assignment.pop(order.get_id())
+                for rn in robots:
+                    self._unassign_robot(rn)
                 self._order_goal_assignment.pop(order.get_id())
-                #print("Order %s completed by robot %s" % (order.get_id(), robots))
-                #print("order %s complete" % order.get_id())
                 order_manager.set_order_completion_time(order, step_ctr)
 
                 self.schedule(step_ctr)
@@ -849,8 +807,9 @@ class Scheduler:
 
         h.set_genes(genes_no_robots)
 
-        self.recalculate_distances()
-        h.set_distance_graph(self._all_distances)
+        # 2A: Pass positions for on-demand distance computation instead of precomputed graph
+        self._update_robot_positions()
+        h.set_positions(self._all_positions)
         h.set_shelf_item_mapping(self._shelf_to_item_mapping)
         h.set_order_to_fulfill(order_list)
 
@@ -865,8 +824,6 @@ class Scheduler:
         possible_robot_numbers = range(1, min(optimal_robots_required+1, len(free_robots) + 1))
 
         init_pop = []
-
-        #print("The order is %s" % order_list)
 
         for i in possible_robot_numbers:
             for j in range(200):
@@ -896,7 +853,6 @@ class Scheduler:
                                 shelf_ctr += 1
                             sol.append(gene_choice)
 
-                #print(sol)
                 enc_sol = []
                 for gene in sol:
                     enc_sol.append(gahandler.encode_string_utf8_to_int(gene))
@@ -915,24 +871,9 @@ class Scheduler:
         ga_instance.run()
 
         solution, solution_fitness, solution_idx = ga_instance.best_solution()
-        #print("best:")
-        #print(solution_fitness)
-        #print("There are %s free robots left" % len(free_robots))
-        #for i in possible_robot_numbers:
-           #print(i)
 
         flat_schedule = []
         for gene in solution:
             flat_schedule.append(gahandler.decode_utf8_int_to_string(gene))
 
-        #ga_instance.plot_fitness()
-
         return solution_fitness, flat_schedule
-
-
-
-
-
-
-
-

@@ -16,7 +16,6 @@ def _get_socket():
 
 def send_udp_message(message: str):
     if os.environ.get("ROBOTSIM_TRANSMIT") == "True":
-        print("sending")
         _get_socket().sendto(bytes(message, "utf-8"), (IP, PORT))
 
 

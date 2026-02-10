@@ -261,7 +261,7 @@ class GAHandler:
         self._shelf_item_mapping = {}
         self._order = None
         self._robot_max_inv = 3
-        self._distance_graph = {}
+        self._positions = {}
 
     def set_genes(self, all_gene_strings):
         self._all_gene_strings = all_gene_strings
@@ -271,8 +271,9 @@ class GAHandler:
 
     def get_int_genes(self):
         return self._all_gene_ints
-    def set_distance_graph(self, graph):
-        self._distance_graph = graph
+
+    def set_positions(self, positions):
+        self._positions = positions
 
     def set_shelf_item_mapping(self, mapping):
         self._shelf_item_mapping = mapping
@@ -295,13 +296,9 @@ class GAHandler:
     def get_distance_between(self, name1, name2):
         if name1 == name2:
             return 0
-        if (name1, name2) not in self._distance_graph.keys():
-            if (name2, name1) not in self._distance_graph.keys():
-                tup = [name2, name1]
-                print("%s not in distance graph" % tup)
-                return None
-            else:
-                return self._distance_graph[(name2, name1)]
-        else:
-            return self._distance_graph[(name1, name2)]
+        pos1 = self._positions.get(name1)
+        pos2 = self._positions.get(name2)
+        if pos1 is None or pos2 is None:
+            return None
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 

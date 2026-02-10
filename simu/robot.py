@@ -1,4 +1,5 @@
 import random
+from collections import deque
 
 import udptransmit
 import entitywithinventory
@@ -15,7 +16,7 @@ class Robot(entitywithinventory.InventoryEntity):
         self._home_y = y
         self.wait_steps = 0
         self._assigned_order = None
-        self._movement_path = []
+        self._movement_path = deque()
         self._current_target = None
         self._steps_halted = 0
         self._prio = None
@@ -98,7 +99,7 @@ class Robot(entitywithinventory.InventoryEntity):
         return self._steps_halted
 
     def set_movement_path(self, path):
-        self._movement_path = path
+        self._movement_path = deque(path) if not isinstance(path, deque) else path
 
     def get_movement_path(self):
         return self._movement_path
