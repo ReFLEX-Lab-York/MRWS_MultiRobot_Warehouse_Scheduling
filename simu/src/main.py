@@ -12,6 +12,9 @@ import matplotlib
 
 from operator import add
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
+
+
 class Simulation:
     def __init__(self, num_sims:int, whouse:str, num_items:int, inv_size:int, schedule_mode:str, fault_rates, fault_mode, step_limit, side_len = None):
         self._side_len = side_len
@@ -127,8 +130,10 @@ class Simulation:
         return [self.num_robots, self._side_len, statistics.mean(self.step_times) / 10**6]
 
 
-def gen_nxn_warehouse(robot_num, side_len, num_items=12):
-    filename = "wt%sx%sr%s.txt" % (side_len, side_len, robot_num)
+def gen_nxn_warehouse(robot_num, side_len, num_items=12, output_dir=None):
+    if output_dir is None:
+        output_dir = DATA_DIR
+    filename = os.path.join(output_dir, "wt%sx%sr%s.txt" % (side_len, side_len, robot_num))
 
     # Build grid as 2D list of characters, all empty initially
     grid = [['X'] * side_len for _ in range(side_len)]
@@ -190,12 +195,12 @@ def gen_nxn_warehouse(robot_num, side_len, num_items=12):
     return filename
 
 def run_simulation_performance_test(scheduling_mode:str, robots_max:int, size_max:int, step_limit:int):
+    tmp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tmp")
     try:
-        os.makedirs("tmp")
+        os.makedirs(tmp_dir)
     except FileExistsError:
-        shutil.rmtree("tmp")
-        os.makedirs("tmp")
-    os.chdir("tmp")
+        shutil.rmtree(tmp_dir)
+        os.makedirs(tmp_dir)
     results = []
     by_sim_size = []
     ctr = 0
@@ -203,7 +208,7 @@ def run_simulation_performance_test(scheduling_mode:str, robots_max:int, size_ma
         by_sim_size.append([])
         for j in range(1, robots_max+1):
             print("starting %s %s" % (j, i))
-            file_name = gen_nxn_warehouse(j, i, 12)
+            file_name = gen_nxn_warehouse(j, i, 12, output_dir=tmp_dir)
             sim_1 = Simulation(10, file_name, 12, 3, scheduling_mode,
                      [0, 0, 0, 0], True, step_limit, i)
             sim_1.run_simulation(False, False)
@@ -245,16 +250,16 @@ def run_simulation_performance_test(scheduling_mode:str, robots_max:int, size_ma
 
 
 def run_completion_time_test(fault_rates):
-    sim = Simulation(500, "whouse2.txt", 10, 3, "simple",
+    sim = Simulation(500, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "simple",
                      fault_rates, True, 1000)
 
-    sim_1 = Simulation(500, "whouse2.txt", 10, 3, "simple-interrupt",
+    sim_1 = Simulation(500, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "simple-interrupt",
                        fault_rates, True, 1000)
 
-    sim_2 = Simulation(500, "whouse2.txt", 10, 3, "multi-robot",
+    sim_2 = Simulation(500, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "multi-robot",
                        fault_rates, True, 1000)
 
-    sim_3 = Simulation(500, "whouse2.txt", 10, 3, "multi-robot-genetic",
+    sim_3 = Simulation(500, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "multi-robot-genetic",
                        fault_rates, True, 1000)
 
     sim.run_simulation(False, False)
@@ -280,10 +285,10 @@ def run_fault_test(scheduling_mode):
     faulty = [0.0001, 0.001, 0.001, 0.001]
     num_sims = 250
 
-    sim = Simulation(num_sims, "whouse2.txt", 10, 3, scheduling_mode,
+    sim = Simulation(num_sims, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, scheduling_mode,
                      faulty, True, 1500)
 
-    sim_1 = Simulation(num_sims, "whouse2.txt", 10, 3, scheduling_mode,
+    sim_1 = Simulation(num_sims, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, scheduling_mode,
                        faulty, False, 1500)
 
 
@@ -376,7 +381,7 @@ if __name__ == "__main__":
     faulty = [0.0001, 0.001, 0.001, 0.001]
     perfect_scenario = [0, 0, 0, 0]
 
-    sim = Simulation(1, "whouse2.txt", 10, 3, "simple-interrupt",
+    sim = Simulation(1, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "simple-interrupt",
                      perfect_scenario, True, 1000)
 
     sim.run_simulation(True, args.t)
