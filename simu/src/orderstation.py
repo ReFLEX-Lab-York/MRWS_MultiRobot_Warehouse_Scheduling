@@ -3,7 +3,6 @@ import entitywithinventory
 import udptransmit
 import math
 
-
 class OrderStation(entitywithinventory.InventoryEntity):
     def __init__(self, x_pos: int, y_pos: int, name: str, get_scheduler, get_order_manager, get_total_steps):
         self._x = x_pos

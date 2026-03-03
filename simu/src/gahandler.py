@@ -57,8 +57,6 @@ def return_how_close(orders, inventories):
 
     return (float(correct_ctr) / total_items)
 
-
-
 def schedules_have_not_completed(schedules):
     for schedule in schedules:
         if not is_schedule_complete(schedule):

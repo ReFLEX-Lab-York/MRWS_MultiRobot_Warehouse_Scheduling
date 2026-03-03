@@ -202,8 +202,6 @@ class Warehouse:
     def cell_within_faulty_robot_move_range(self, x, y):
         return (x, y) in self._faulty_blocked_cells
 
-
-
     def move_robot_towards_astar_collision_detect(self, robot_obj):
         # If the robot has no planned path when we ask it to move, it should try and compute one
         if not robot_obj.get_movement_path():

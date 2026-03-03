@@ -8,13 +8,37 @@ MRWS (MultiRobot Warehouse Simulator) is a Python simulator for robotic smart wa
 
 ## Running the Simulator
 
+All source files live in `simu/src/` with bare imports (no package structure), so the working directory must be `simu/src/`:
+
 ```bash
-cd simu
-python main.py           # Run simulation without visualization
-python main.py -t        # Run with UDP transmission to Unity visualizer
+cd simu/src
+python main.py              # Run 1000 sims (default)
+python main.py -n 1         # Run 1 simulation
+python main.py -t           # Run with UDP transmission to Unity visualizer
+python main.py -t -n 1      # Single sim with visualization
+```
+
+The conda environment is `MRWS`:
+```bash
+conda run -n MRWS python main.py -n 1
 ```
 
 The `-t` flag sets `ROBOTSIM_TRANSMIT=True` in the environment, which `udptransmit.py` checks before sending any UDP packets. The `slow_for_transmit` parameter in `run_simulation()` adds 200ms delays between steps for visualization.
+
+### Verifying All Scheduling Modes
+
+```bash
+cd simu/src
+python -c "
+import os; os.environ['ROBOTSIM_TRANSMIT'] = 'False'
+from main import Simulation
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath('main.py')), '..', 'data')
+for mode in ['simple', 'simple-interrupt', 'multi-robot', 'multi-robot-genetic']:
+    sim = Simulation(1, os.path.join(DATA_DIR, 'whouse2.txt'), 10, 3, mode, [0,0,0,0], True, 1000)
+    sim.run_simulation(True, False)
+    print(f'{mode} OK')
+"
+```
 
 There are no tests, linting, or formatting tools configured.
 
@@ -22,7 +46,7 @@ There are no tests, linting, or formatting tools configured.
 
 ### Simulation Entry Point (`main.py`)
 
-`Simulation` is the top-level runner. It takes: number of sims, warehouse file, number of items, robot inventory size, scheduling mode, fault rates (list of 4 floats), fault tolerance flag, and step limit. The `__main__` block configures and runs a single simulation with `whouse2.txt`.
+`Simulation` is the top-level runner. It takes: number of sims, warehouse file, number of items, robot inventory size, scheduling mode, fault rates (list of 4 floats), fault tolerance flag, and step limit. The warehouse file path must be absolute or relative to `simu/src/`; `DATA_DIR` points to `simu/data/`. The `__main__` block configures and runs simulations with `whouse2.txt`.
 
 Helper functions (`run_completion_time_test`, `run_fault_test`, `run_simulation_performance_test`) run batch experiments and plot results with matplotlib.
 
@@ -98,6 +122,15 @@ Text files where each character represents a cell:
 - `W`: Wall
 
 Two warehouse files exist: `whouse.txt` and `whouse2.txt`.
+
+## Critical Implementation Details
+
+- **Item comparison**: Items use `__eq__` (name + dependency), NOT identity. `report_inventory()` and `transfer_inventory()` return `deepcopy` — never use `id()` for item comparison.
+- **Robot position lookup**: `Warehouse._position_to_robot` maps `(x,y) -> robot_name` for O(1) lookups.
+- **Schedule queues**: Robot `_movement_path` and schedules use `deque` — use `popleft()` not `pop(0)`.
+- **GA scaling guard**: If >50 free robots, the genetic algorithm falls back to `multi_robot_schedule_simple` to avoid combinatorial explosion.
+- **GA distance**: `GAHandler.get_distance_between()` computes taxicab distance on-demand from a positions dict.
+- **Sensor fault zones**: `_faulty_blocked_cells` is a set of cells adjacent to sensor-faulted robots, recomputed each step.
 
 ## Dependencies
 

@@ -4,8 +4,15 @@ A Python simulator for a robotic smart warehouse, with many configurable propert
 
 ## Project Structure
 
-- `simu/`: simulator (Python)
-- `viz/`: visualiser (Unity)
+```text
+Simulator (Python)
+    |-- GUI (can be turned on/off)
+    `-- Visualiser (Unity via UDP)
+```
+
+- `simu/`: Core simulation engine, scheduling logic, and CLI entrypoint.
+- `viz/`: Unity project for real-time visualisation of simulation state.
+
 
 ## Requirements
 
@@ -19,6 +26,7 @@ Visualisation:
 
 - Unity 6000.0.41f1
 
+
 ## Usage
 
 Run simulations from the `simu/` directory:
@@ -31,18 +39,19 @@ python main.py -t        # Run with UDP transmission to Unity visualiser
 
 When running with `-t`, setting `slow_for_transmit` to `True` when calling `run_simulation()` adds a delay between each simulation step so the visualiser can keep up.
 
-### Configuring a Simulation
+
+### Configurations
 
 Simulations are configured by constructing a `Simulation` object in `main.py`:
 
 ```python
 sim = Simulation(
-    num_sims=1,                          # Number of simulation runs
+    num_sims=1000,                       # Number of simulation runs
     whouse="whouse2.txt",                # Warehouse layout file
     num_items=10,                        # Number of distinct items (must match shelf count)
     inv_size=3,                          # Robot inventory capacity
     schedule_mode="simple-interrupt",    # Scheduling algorithm
-    fault_rates=[0, 0, 0, 0],           # Fault rates: [battery_critical, battery_low, actuator, sensor]
+    fault_rates=[0, 0, 0, 0],            # Fault rates: [battery_critical, battery_low, actuator, sensor]
     fault_mode=True,                     # Enable fault-tolerant rescheduling
     step_limit=1000                      # Max simulation steps before timeout
 )
