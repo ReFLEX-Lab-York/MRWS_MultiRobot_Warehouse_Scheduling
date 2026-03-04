@@ -1,7 +1,7 @@
-import customexceptions
+from mrws.exceptions import SimulationError
+from mrws.entities.inventory import InventoryEntity
 import copy
 import math
-import entitywithinventory
 
 
 def encode_string_utf8_to_int(string1):
@@ -68,11 +68,11 @@ def is_schedule_complete(schedule):
         return True
     return False
 
-class MockRobot(entitywithinventory.InventoryEntity):
+class MockRobot(InventoryEntity):
     def __init__(self, name, inv_size):
         super().__init__(name, inv_size, False)
 
-class MockGoal(entitywithinventory.InventoryEntity):
+class MockGoal(InventoryEntity):
     def __init__(self, name):
         super().__init__(name, math.inf, False)
 
@@ -89,7 +89,7 @@ def fitness_func(ga_instance, solution, solution_idx):
     for int_gene in solution:
         decoded = decode_utf8_int_to_string(int_gene)
         if decoded not in handler.get_all_string_genes() and "robot" not in decoded:
-            raise customexceptions.SimulationError("Invalid gene in solution %s" % decoded)
+            raise SimulationError("Invalid gene in solution %s" % decoded)
         solution_decoded.append(decoded)
 
     robot_indices = []
@@ -193,14 +193,14 @@ def fitness_func(ga_instance, solution, solution_idx):
                     else:
                         order_items.remove(item)
                 correct_pickups_so_far += 1
-            except customexceptions.SimulationError:
+            except SimulationError:
                 return -1 + (float(correct_pickups_so_far) / order_total_items)**2 + (float(steps_executed_succesfully)/schedules_total_length)**2
 
         elif "goal" in target:
             try:
                 mock_goals[target].receive_inventory(mock_robots[robot_id].transfer_inventory())
 
-            except customexceptions.SimulationError as err:
+            except SimulationError as err:
                 return -1 + (float(correct_pickups_so_far) / order_total_items)**2 + (float(steps_executed_succesfully)/schedules_total_length)**2
 
             order1 = return_equivalent_full_order([order_to_fulfill],
@@ -299,4 +299,3 @@ class GAHandler:
         if pos1 is None or pos2 is None:
             return None
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
-

@@ -25,4 +25,3 @@ class RobotHome:
 
     def get_position(self):
         return self._x, self._y
-

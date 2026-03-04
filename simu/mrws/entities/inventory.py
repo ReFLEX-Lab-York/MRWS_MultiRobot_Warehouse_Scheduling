@@ -1,8 +1,7 @@
-import customexceptions
-import item
+from mrws.exceptions import SimulationError
+from mrws.models.item import Item
+from mrws.io import udp
 import math
-
-import udptransmit
 import copy
 
 # Models an entity with a LIFO stack inventory, where items within the stack must follow a dependency
@@ -17,26 +16,26 @@ class InventoryEntity:
         # This is used by the genetic algorithm to stop the simplified simulator from transmitting
         self._should_transmit = is_simulation_obj
 
-    def add_item_to_inventory(self, item_to_add: item.Item):
+    def add_item_to_inventory(self, item_to_add: Item):
         new_dep = item_to_add.get_dependency()
         if new_dep <= self.last_item_dep:
             self._inventory.append(item_to_add)
             self.last_item_dep = new_dep
 
             if len(self._inventory) > self._max_inv:
-                raise customexceptions.SimulationError("Inventory of object %s overfilled" % self._name)
+                raise SimulationError("Inventory of object %s overfilled" % self._name)
 
             if self._should_transmit:
-                udptransmit.transmit_item_gained(self._name, item_to_add.get_name())
+                udp.transmit_item_gained(self._name, item_to_add.get_name())
         else:
-            raise customexceptions.SimulationError("Item dependency rule violated by object %s" % self._name)
+            raise SimulationError("Item dependency rule violated by object %s" % self._name)
 
-    def pop_item_from_inventory(self) -> item.Item:
+    def pop_item_from_inventory(self) -> Item:
         if len(self._inventory) == 0:
-            raise customexceptions.SimulationError("Tried to pop from an empty inventory")
+            raise SimulationError("Tried to pop from an empty inventory")
         popped_item = self._inventory.pop()
         if self._should_transmit:
-            udptransmit.transmit_item_lost(self._name, popped_item.get_name())
+            udp.transmit_item_lost(self._name, popped_item.get_name())
         if len(self._inventory) == 0:
             self.last_item_dep = math.inf
         else:
@@ -46,7 +45,7 @@ class InventoryEntity:
     def clear_inventory(self):
         self._inventory = []
         if self._should_transmit:
-            udptransmit.transmit_clear_inventory(self._name)
+            udp.transmit_clear_inventory(self._name)
         self.last_item_dep = math.inf
 
 
@@ -59,13 +58,13 @@ class InventoryEntity:
 
     def transfer_inventory(self):
         if len(self._inventory) == 0:
-            raise customexceptions.SimulationError("Tried to transfer an empty inventory")
+            raise SimulationError("Tried to transfer an empty inventory")
 
         if self._amount_items_transfer_next_time is None:
             inventory_copy = copy.deepcopy(self._inventory)
             self._inventory = []
             if self._should_transmit:
-                udptransmit.transmit_clear_inventory(self._name)
+                udp.transmit_clear_inventory(self._name)
             self.last_item_dep = math.inf
             return inventory_copy
         else:

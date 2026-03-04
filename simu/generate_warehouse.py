@@ -22,7 +22,7 @@ import sys
 
 from validate_warehouse import validate_warehouse, print_report
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
 def generate_warehouse(side_len, robot_num, num_items=12, num_goals=None, output=None):

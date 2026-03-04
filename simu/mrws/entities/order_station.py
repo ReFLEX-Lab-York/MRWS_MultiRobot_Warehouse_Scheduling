@@ -1,9 +1,8 @@
-import customexceptions
-import entitywithinventory
-import udptransmit
+from mrws.entities.inventory import InventoryEntity
+from mrws.io import udp
 import math
 
-class OrderStation(entitywithinventory.InventoryEntity):
+class OrderStation(InventoryEntity):
     def __init__(self, x_pos: int, y_pos: int, name: str, get_scheduler, get_order_manager, get_total_steps):
         self._x = x_pos
         self._y = y_pos
@@ -13,7 +12,7 @@ class OrderStation(entitywithinventory.InventoryEntity):
         super().__init__(name, math.inf)
 
     def transmit_creation(self):
-        udptransmit.transmit_goal_creation(self._name, self._x, self._y)
+        udp.transmit_goal_creation(self._name, self._x, self._y)
 
     def interact(self, obj):
         #print("Robot %s interacting with order station %s" % (obj.get_name(), self._name))

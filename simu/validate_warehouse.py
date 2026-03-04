@@ -101,7 +101,7 @@ def print_report(filepath, errors, stats):
         print(f"Status:    VALID")
 
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
 def scan_all_warehouses(data_dir=None, run_sim=False, schedule_mode="multi-robot",

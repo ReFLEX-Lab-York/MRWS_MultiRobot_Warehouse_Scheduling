@@ -1,5 +1,5 @@
-import customexceptions
-import warehouse
+from mrws.exceptions import SimulationError
+from mrws.engine.warehouse import Warehouse
 import os
 import argparse
 import time
@@ -14,7 +14,7 @@ import numpy as np
 
 from operator import add
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DEFAULT_TRANSMIT_DELAY_S = 0.2
 PRIORITY_LEVELS = 5
 
@@ -74,7 +74,7 @@ class Simulation:
             print(f"Starting sim {sim_num}")
             sim_step_times = []
             try:
-                simu = warehouse.Warehouse(
+                simu = Warehouse(
                     self.warehouse_file,
                     self._num_items,
                     self._inv_size,
@@ -92,7 +92,7 @@ class Simulation:
                     elapsed_time_between = time.perf_counter_ns() - before_step_time
                     sim_step_times.append(elapsed_time_between)
 
-            except customexceptions.SimulationError as err:
+            except SimulationError as err:
                 if reraise_error:
                     raise err
                 self.error_strings.append(err)
@@ -216,7 +216,7 @@ def gen_nxn_warehouse(robot_num, side_len, num_items=12, output_dir=None):
     return filename
 
 def run_simulation_performance_test(scheduling_mode: str, robots_max: int, size_max: int, step_limit: int):
-    tmp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tmp")
+    tmp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp")
     if os.path.isdir(tmp_dir):
         shutil.rmtree(tmp_dir)
     os.makedirs(tmp_dir)
@@ -427,17 +427,17 @@ if __name__ == "__main__":
     perfect_scenario = [0, 0, 0, 0]
 
     if args.gui:
-        import gui
+        from mrws.io.gui import launch_gui
 
         os.environ["ROBOTSIM_TRANSMIT"] = "False"
 
         def make_warehouse():
-            return warehouse.Warehouse(
+            return Warehouse(
                 args.warehouse, args.items, 3, args.mode, perfect_scenario, True, 1000,
             )
 
         simu = make_warehouse()
-        gui.launch_gui(simu, warehouse_factory=make_warehouse)
+        launch_gui(simu, warehouse_factory=make_warehouse)
     else:
         sim = Simulation(
             args.num_sims,

@@ -8,10 +8,10 @@ MRWS (MultiRobot Warehouse Simulator) is a Python simulator for robotic smart wa
 
 ## Running the Simulator
 
-All source files live in `simu/src/` with bare imports (no package structure), so the working directory must be `simu/src/`:
+The codebase is organized as a Python package (`mrws/`) under `simu/`. CLI scripts live at `simu/` level and the working directory must be `simu/`:
 
 ```bash
-cd simu/src
+cd simu
 python main.py              # Run 1000 sims (default)
 python main.py -n 1         # Run 1 simulation
 python main.py -t           # Run with UDP transmission to Unity visualizer
@@ -20,21 +20,22 @@ python main.py -t -n 1      # Single sim with visualization
 
 The conda environment is `MRWS`:
 ```bash
+cd simu
 conda run -n MRWS python main.py -n 1
 ```
 
-The `-t` flag sets `ROBOTSIM_TRANSMIT=True` in the environment, which `udptransmit.py` checks before sending any UDP packets. The `slow_for_transmit` parameter in `run_simulation()` adds 200ms delays between steps for visualization.
+The `-t` flag sets `ROBOTSIM_TRANSMIT=True` in the environment, which `mrws/io/udp.py` checks before sending any UDP packets. The `slow_for_transmit` parameter in `run_simulation()` adds 200ms delays between steps for visualization.
 
 ### Verifying All Scheduling Modes
 
 ```bash
-cd simu/src
+cd simu
 python -c "
 import os; os.environ['ROBOTSIM_TRANSMIT'] = 'False'
 from main import Simulation
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath('main.py')), '..', 'data')
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath('main.py')), 'data')
 for mode in ['simple', 'simple-interrupt', 'multi-robot', 'multi-robot-genetic']:
-    sim = Simulation(1, os.path.join(DATA_DIR, 'whouse2.txt'), 10, 3, mode, [0,0,0,0], True, 1000)
+    sim = Simulation(1, os.path.join(DATA_DIR, 'whouse.txt'), 10, 3, mode, [0,0,0,0], True, 1000)
     sim.run_simulation(True, False)
     print(f'{mode} OK')
 "
@@ -42,11 +43,68 @@ for mode in ['simple', 'simple-interrupt', 'multi-robot', 'multi-robot-genetic']
 
 There are no tests, linting, or formatting tools configured.
 
+## Package Structure
+
+```
+simu/
+  main.py                          # CLI entry point (Simulation class, batch experiments)
+  generate_warehouse.py            # CLI tool for generating warehouse files
+  validate_warehouse.py            # CLI tool for validating warehouse files
+  data/                            # Warehouse files (.txt)
+  mrws/                            # Main Python package
+    __init__.py
+    exceptions.py                  # SimulationError
+    utils.py                       # taxicab_dist, reconstruct_astar_path
+
+    models/
+      item.py                      # Item (name + dependency)
+      order.py                     # Order (items, priority, id)
+
+    entities/
+      inventory.py                 # InventoryEntity base class (LIFO stack)
+      robot.py                     # Robot(InventoryEntity)
+      shelf.py                     # Shelf
+      order_station.py             # OrderStation(InventoryEntity)
+      home.py                      # RobotHome
+
+    scheduling/
+      scheduler.py                 # Scheduler core: __init__, schedule(), helpers
+      simple.py                    # simple_single_robot_schedule, single_interrupt_robot_schedule
+      multi_robot.py               # multi_robot_schedule_*, run_genetic_algorithm, fault reassignment
+      ga_handler.py                # GAHandler singleton, MockRobot, MockGoal, fitness_func
+
+    engine/
+      warehouse.py                 # Warehouse: init, step, parsing, movement, faults
+      pathfinding.py               # PrioNode + compute_astar_path standalone function
+      deadlock.py                  # Deadlock detection & resolution (attached to Warehouse)
+      order_manager.py             # OrderManager
+
+    io/
+      udp.py                       # UDP transmit functions
+      gui.py                       # PyQt6 debug GUI
+```
+
+### Split File Pattern
+
+`scheduler.py` and `warehouse.py` are split across multiple files using method attachment:
+
+```python
+# scheduling/simple.py defines functions taking `self` as first param
+def simple_single_robot_schedule(self, fault_tolerant_mode, ...):
+    ...
+
+# scheduling/scheduler.py attaches them to the Scheduler class
+class Scheduler:
+    simple_single_robot_schedule = simple_single_robot_schedule
+```
+
+Similarly, `engine/deadlock.py` defines methods attached to `Warehouse`, and `engine/pathfinding.py` provides a standalone `compute_astar_path()` function called by `Warehouse.compute_robot_astar_path()`.
+
 ## Key Architecture
 
 ### Simulation Entry Point (`main.py`)
 
-`Simulation` is the top-level runner. It takes: number of sims, warehouse file, number of items, robot inventory size, scheduling mode, fault rates (list of 4 floats), fault tolerance flag, and step limit. The warehouse file path must be absolute or relative to `simu/src/`; `DATA_DIR` points to `simu/data/`. The `__main__` block configures and runs simulations with `whouse2.txt`.
+`Simulation` is the top-level runner. It takes: number of sims, warehouse file, number of items, robot inventory size, scheduling mode, fault rates (list of 4 floats), fault tolerance flag, and step limit. The warehouse file path must be absolute or relative to `simu/`; `DATA_DIR` points to `simu/data/`.
 
 Helper functions (`run_completion_time_test`, `run_fault_test`, `run_simulation_performance_test`) run batch experiments and plot results with matplotlib.
 
@@ -73,11 +131,11 @@ All interactable entities (`Shelf`, `OrderStation`, `RobotHome`) implement an `i
 
 ### Scheduling Modes
 
-Four scheduling algorithms in `Scheduler`:
+Four scheduling algorithms in `Scheduler` (split across `scheduling/scheduler.py`, `simple.py`, `multi_robot.py`):
 - `simple`: One robot per order, FIFO assignment
 - `simple-interrupt`: One robot with priority-based preemption (can steal a lower-priority robot mid-task)
 - `multi-robot`: Multiple robots per order when enough are free; falls back to single-robot
-- `multi-robot-genetic`: Uses `pygad` GA to optimize multi-robot schedules via `gahandler.py`
+- `multi-robot-genetic`: Uses `pygad` GA to optimize multi-robot schedules via `ga_handler.py`
 
 ### Schedule Format
 
@@ -87,7 +145,7 @@ Robot schedules are lists of string targets: `"shelf3"`, `"goal0"`, `"home1"`. P
 - `"block|flag5"` — wait until flag is set before proceeding
 - `"wait"` — idle (used in GA gene space)
 
-### Genetic Algorithm (`gahandler.py`)
+### Genetic Algorithm (`scheduling/ga_handler.py`)
 
 `GAHandler` is a singleton that bridges the `Scheduler` and `pygad`. Gene encoding converts entity name strings to/from integers via UTF-8 byte representation. The fitness function (`fitness_func`) runs a simplified simulation with `MockRobot`/`MockGoal` objects to evaluate candidate schedules without the full warehouse.
 
@@ -103,14 +161,14 @@ When `fault_tolerant_mode=True`, the scheduler calls `reassign_orders_if_faulted
 
 ### Deadlock Resolution
 
-`Warehouse` handles three deadlock scenarios:
+`Warehouse` handles three deadlock scenarios (implemented in `engine/deadlock.py`):
 1. **Blocked path**: Robot recomputes A* path around obstacles after waiting
 2. **Head-on collision**: Lower-priority robot moves aside (perpendicular)
 3. **Cyclic deadlock**: Detected by following robot-target chains; broken by priority
 
 ### Visualization Protocol
 
-UDP JSON messages sent to Unity on `127.0.0.1:35891` via `udptransmit.py`. Only transmits when `ROBOTSIM_TRANSMIT` env var is `"True"`.
+UDP JSON messages sent to Unity on `127.0.0.1:35891` via `mrws/io/udp.py`. Only transmits when `ROBOTSIM_TRANSMIT` env var is `"True"`.
 
 ### Warehouse File Format
 
@@ -121,7 +179,7 @@ Text files where each character represents a cell:
 - `X`: Empty/traversable cell
 - `W`: Wall
 
-Two warehouse files exist: `whouse.txt` and `whouse2.txt`.
+Warehouse files are in `simu/data/`.
 
 ## Critical Implementation Details
 
