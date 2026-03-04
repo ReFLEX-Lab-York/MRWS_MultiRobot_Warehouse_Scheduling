@@ -494,9 +494,10 @@ class OrderPanel(QWidget):
 class SimulationGUI(QMainWindow):
     """Main window that ties the scene, view, panels, and controls together."""
 
-    def __init__(self, warehouse, parent=None):
+    def __init__(self, warehouse, warehouse_factory=None, parent=None):
         super().__init__(parent)
         self._warehouse = warehouse
+        self._warehouse_factory = warehouse_factory
         self._selected_robot = None
         self._sim_running = False
         self._sim_finished = False
@@ -555,6 +556,11 @@ class SimulationGUI(QMainWindow):
         self._btn_step.clicked.connect(self._on_step)
         toolbar.addWidget(self._btn_step)
 
+        self._btn_reset = QPushButton("Reset")
+        self._btn_reset.clicked.connect(self._on_reset)
+        self._btn_reset.setEnabled(self._warehouse_factory is not None)
+        toolbar.addWidget(self._btn_reset)
+
         toolbar.addSeparator()
 
         toolbar.addWidget(QLabel(" Speed: "))
@@ -596,6 +602,22 @@ class SimulationGUI(QMainWindow):
         if self._sim_finished:
             return
         self._do_simulation_step()
+
+    def _on_reset(self):
+        if self._warehouse_factory is None:
+            return
+        self._timer.stop()
+        self._sim_running = False
+        self._sim_finished = False
+        self._step_counter = 0
+        self._selected_robot = None
+        self._warehouse = self._warehouse_factory()
+        self._scene._warehouse = self._warehouse
+        self._scene._width = self._warehouse._width
+        self._scene._height = self._warehouse._height
+        self._view._warehouse = self._warehouse
+        self._status_label.setText(" Status: Paused ")
+        self.refresh_display()
 
     def _on_speed_changed(self, value):
         # Invert: slider right = faster (lower interval)
@@ -648,10 +670,15 @@ class SimulationGUI(QMainWindow):
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
-def launch_gui(warehouse):
+def launch_gui(warehouse, warehouse_factory=None):
     """Create a QApplication, show the SimulationGUI window, and run the
-    event loop.  Call this from main.py when ``--gui`` is passed."""
+    event loop.  Call this from main.py when ``--gui`` is passed.
+
+    *warehouse_factory*, if provided, is a callable that returns a fresh
+    ``Warehouse`` instance with the same parameters.  This enables the
+    Reset button.
+    """
     app = QApplication(sys.argv)
-    window = SimulationGUI(warehouse)
+    window = SimulationGUI(warehouse, warehouse_factory=warehouse_factory)
     window.show()
     sys.exit(app.exec())

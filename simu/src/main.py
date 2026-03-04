@@ -402,6 +402,13 @@ if __name__ == "__main__":
         choices=["simple", "simple-interrupt", "multi-robot", "multi-robot-genetic"],
         help="Scheduling mode.",
     )
+    parser.add_argument(
+        "-w",
+        "--warehouse",
+        type=str,
+        default=os.path.join(DATA_DIR, "whouse.txt"),
+        help="Path to warehouse file (default: data/whouse.txt).",
+    )
     args = parser.parse_args()
     os.environ["ROBOTSIM_TRANSMIT"] = str(args.transmit)
 
@@ -411,20 +418,18 @@ if __name__ == "__main__":
         import gui
 
         os.environ["ROBOTSIM_TRANSMIT"] = "False"
-        simu = warehouse.Warehouse(
-            os.path.join(DATA_DIR, "whouse2.txt"),
-            10,
-            3,
-            args.mode,
-            perfect_scenario,
-            True,
-            1000,
-        )
-        gui.launch_gui(simu)
+
+        def make_warehouse():
+            return warehouse.Warehouse(
+                args.warehouse, 10, 3, args.mode, perfect_scenario, True, 1000,
+            )
+
+        simu = make_warehouse()
+        gui.launch_gui(simu, warehouse_factory=make_warehouse)
     else:
         sim = Simulation(
             args.num_sims,
-            os.path.join(DATA_DIR, "whouse2.txt"),
+            args.warehouse,
             10,
             3,
             args.mode,
