@@ -386,15 +386,51 @@ if __name__ == "__main__":
         "--num-sims",
         type=int,
         default=1000,
-        help="Number of simulation cycles to run (default: 1).",
+        help="Number of simulation cycles to run (default: 1000).",
+    )
+    parser.add_argument(
+        "-g",
+        "--gui",
+        action="store_true",
+        help="Launch PyQt6 debug GUI (forces -n 1).",
+    )
+    parser.add_argument(
+        "-m",
+        "--mode",
+        type=str,
+        default="simple-interrupt",
+        choices=["simple", "simple-interrupt", "multi-robot", "multi-robot-genetic"],
+        help="Scheduling mode.",
     )
     args = parser.parse_args()
     os.environ["ROBOTSIM_TRANSMIT"] = str(args.transmit)
-    
+
     faulty_scenario = [0.0001, 0.001, 0.001, 0.001]
     perfect_scenario = [0, 0, 0, 0]
 
-    sim = Simulation(args.num_sims, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "simple-interrupt",
-                     perfect_scenario, True, 1000)
+    if args.gui:
+        import gui
 
-    sim.run_simulation(True, args.transmit)
+        os.environ["ROBOTSIM_TRANSMIT"] = "False"
+        simu = warehouse.Warehouse(
+            os.path.join(DATA_DIR, "whouse2.txt"),
+            10,
+            3,
+            args.mode,
+            perfect_scenario,
+            True,
+            1000,
+        )
+        gui.launch_gui(simu)
+    else:
+        sim = Simulation(
+            args.num_sims,
+            os.path.join(DATA_DIR, "whouse2.txt"),
+            10,
+            3,
+            args.mode,
+            perfect_scenario,
+            True,
+            1000,
+        )
+        sim.run_simulation(True, args.transmit)
