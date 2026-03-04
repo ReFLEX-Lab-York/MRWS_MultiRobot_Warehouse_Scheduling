@@ -392,7 +392,7 @@ if __name__ == "__main__":
         "-g",
         "--gui",
         action="store_true",
-        help="Launch PyQt6 debug GUI (forces -n 1).",
+        help="Launch PyQt6 debug GUI (ignores -n).",
     )
     parser.add_argument(
         "-m",
@@ -405,7 +405,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     os.environ["ROBOTSIM_TRANSMIT"] = str(args.transmit)
 
-    faulty_scenario = [0.0001, 0.001, 0.001, 0.001]
     perfect_scenario = [0, 0, 0, 0]
 
     if args.gui:

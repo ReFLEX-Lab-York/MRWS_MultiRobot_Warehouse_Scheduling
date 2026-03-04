@@ -6,7 +6,6 @@ a grid display, robot inspector, and order panel.
 """
 
 import sys
-import math
 from collections import deque
 
 from PyQt6.QtWidgets import (
@@ -599,10 +598,11 @@ class SimulationGUI(QMainWindow):
         self._do_simulation_step()
 
     def _on_speed_changed(self, value):
-        self._timer_interval_ms = value
-        self._speed_label.setText(f" {value}ms ")
+        # Invert: slider right = faster (lower interval)
+        self._timer_interval_ms = 1010 - value
+        self._speed_label.setText(f" {self._timer_interval_ms}ms ")
         if self._timer.isActive():
-            self._timer.setInterval(value)
+            self._timer.setInterval(self._timer_interval_ms)
 
     def _on_timer_tick(self):
         if self._sim_finished:
