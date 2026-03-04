@@ -42,6 +42,7 @@ from PyQt6.QtGui import (
     QWheelEvent,
     QMouseEvent,
     QPainter,
+    QKeyEvent,
 )
 
 
@@ -312,6 +313,13 @@ class WarehouseView(QGraphicsView):
             self.scale(1 / factor, 1 / factor)
             self._zoom_factor /= factor
 
+    def keyPressEvent(self, event: QKeyEvent):
+        """Forward shortcut keys to the main window."""
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_S, Qt.Key.Key_R):
+            self.window().keyPressEvent(event)
+        else:
+            super().keyPressEvent(event)
+
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton and self._on_robot_click:
             scene_pos = self.mapToScene(event.pos())
@@ -545,18 +553,22 @@ class SimulationGUI(QMainWindow):
         self.addToolBar(Qt.ToolBarArea.BottomToolBarArea, toolbar)
 
         self._btn_play = QPushButton("Play")
+        self._btn_play.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._btn_play.clicked.connect(self._on_play)
         toolbar.addWidget(self._btn_play)
 
         self._btn_pause = QPushButton("Pause")
+        self._btn_pause.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._btn_pause.clicked.connect(self._on_pause)
         toolbar.addWidget(self._btn_pause)
 
         self._btn_step = QPushButton("Step")
+        self._btn_step.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._btn_step.clicked.connect(self._on_step)
         toolbar.addWidget(self._btn_step)
 
         self._btn_reset = QPushButton("Reset")
+        self._btn_reset.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._btn_reset.clicked.connect(self._on_reset)
         self._btn_reset.setEnabled(self._warehouse_factory is not None)
         toolbar.addWidget(self._btn_reset)
@@ -565,6 +577,7 @@ class SimulationGUI(QMainWindow):
 
         toolbar.addWidget(QLabel(" Speed: "))
         self._speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self._speed_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._speed_slider.setMinimum(10)
         self._speed_slider.setMaximum(1000)
         self._speed_slider.setValue(self._timer_interval_ms)
@@ -584,19 +597,55 @@ class SimulationGUI(QMainWindow):
         self._status_label = QLabel(" Status: Paused ")
         toolbar.addWidget(self._status_label)
 
+        # Initial button highlight
+        self._update_button_styles()
+
+    # -- button styling ------------------------------------------------------
+
+    _STYLE_PLAYING = "background-color: #2eaa2e; color: white; font-weight: bold;"
+    _STYLE_PAUSED = "background-color: #ccaa00; color: white; font-weight: bold;"
+    _STYLE_NORMAL = ""
+
+    def _update_button_styles(self):
+        """Highlight only the active state button."""
+        if self._sim_running:
+            self._btn_play.setStyleSheet(self._STYLE_PLAYING)
+            self._btn_pause.setStyleSheet(self._STYLE_NORMAL)
+            self._status_label.setText(" Status: Running ")
+        else:
+            self._btn_play.setStyleSheet(self._STYLE_NORMAL)
+            self._btn_pause.setStyleSheet(self._STYLE_PAUSED)
+            self._status_label.setText(" Status: Paused ")
+
+    # -- keyboard shortcuts --------------------------------------------------
+
+    def keyPressEvent(self, event: QKeyEvent):
+        key = event.key()
+        if key == Qt.Key.Key_Space:
+            if self._sim_running:
+                self._on_pause()
+            else:
+                self._on_play()
+        elif key == Qt.Key.Key_S:
+            self._on_step()
+        elif key == Qt.Key.Key_R:
+            self._on_reset()
+        else:
+            super().keyPressEvent(event)
+
     # -- callbacks -----------------------------------------------------------
 
     def _on_play(self):
         if self._sim_finished:
             return
         self._sim_running = True
-        self._status_label.setText(" Status: Running ")
         self._timer.start(self._timer_interval_ms)
+        self._update_button_styles()
 
     def _on_pause(self):
         self._sim_running = False
-        self._status_label.setText(" Status: Paused ")
         self._timer.stop()
+        self._update_button_styles()
 
     def _on_step(self):
         if self._sim_finished:
@@ -616,7 +665,7 @@ class SimulationGUI(QMainWindow):
         self._scene._width = self._warehouse._width
         self._scene._height = self._warehouse._height
         self._view._warehouse = self._warehouse
-        self._status_label.setText(" Status: Paused ")
+        self._update_button_styles()
         self.refresh_display()
 
     def _on_speed_changed(self, value):
@@ -653,8 +702,11 @@ class SimulationGUI(QMainWindow):
 
         if done:
             self._sim_finished = True
+            self._sim_running = False
             self._timer.stop()
             self._status_label.setText(" Status: Completed ")
+            self._btn_play.setStyleSheet(self._STYLE_NORMAL)
+            self._btn_pause.setStyleSheet(self._STYLE_NORMAL)
 
         self.refresh_display()
 
