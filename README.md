@@ -21,6 +21,7 @@ Simulation:
 - Python >= 3.11
 - pygad
 - matplotlib
+- PyQt6 (for the debug GUI)
 
 Visualisation:
 
@@ -29,15 +30,45 @@ Visualisation:
 
 ## Usage
 
-Run simulations from the `simu/` directory:
+Run simulations from the `simu/src/` directory:
 
 ```bash
-cd simu
-python main.py           # Run simulation without visualisation
-python main.py -t        # Run with UDP transmission to Unity visualiser
+cd simu/src
+python main.py                # Run 1000 simulations (default)
+python main.py -n 1           # Run a single simulation
+python main.py -t             # Run with UDP transmission to Unity visualiser
+python main.py -g             # Launch the debug GUI
+python main.py -g -m multi-robot   # GUI with a specific scheduling mode
 ```
 
-When running with `-t`, setting `slow_for_transmit` to `True` when calling `run_simulation()` adds a delay between each simulation step so the visualiser can keep up.
+### CLI Parameters
+
+| Flag | Long form | Description | Default |
+|------|-----------|-------------|---------|
+| `-n` | `--num-sims` | Number of simulation cycles to run | `1000` |
+| `-m` | `--mode` | Scheduling mode (`simple`, `simple-interrupt`, `multi-robot`, `multi-robot-genetic`) | `simple-interrupt` |
+| `-w` | `--warehouse` | Path to warehouse layout file | `data/whouse.txt` |
+| `-t` | `--transmit` | Enable UDP transmission to Unity visualiser | off |
+| `-g` | `--gui` | Launch PyQt6 debug GUI (ignores `-n`) | off |
+
+### Debug GUI
+
+Launch with `-g` to open a real-time PyQt6 debug window:
+
+```bash
+python main.py -g
+```
+
+Features:
+- **Grid view** — warehouse rendered with color-coded robots, shelves, goals, homes, and walls. Scroll to zoom, drag to pan.
+- **Robot inspector** — click any robot to see its position, target, schedule queue, inventory, fault status, and A* path overlay.
+- **Order panel** — tracks active, backlog, and completed orders with robot assignments and item details.
+- **Fault overlays** — robots change color by fault type (green=healthy, yellow=battery low, red=critical, orange=actuator, purple=sensor) with letter indicators.
+- **Playback controls** — Play / Pause / Step buttons, speed slider, and step counter.
+
+Use `-m` to select a scheduling mode: `simple`, `simple-interrupt` (default), `multi-robot`, or `multi-robot-genetic`.
+
+When running with `-t` (without `-g`), setting `slow_for_transmit` to `True` when calling `run_simulation()` adds a delay between each simulation step so the Unity visualiser can keep up.
 
 
 ### Configurations
@@ -89,7 +120,57 @@ GRXXXXXXXXX
 XXXXXXXXXXX
 ```
 
-Custom layouts can be created as `.txt` files in the `simu/` directory. The number of `S` cells must equal the `num_items` parameter.
+Custom layouts can be created as `.txt` files in the `simu/data/` directory. The number of `S` cells must equal the `num_items` parameter.
+
+### Warehouse Tools
+
+Two standalone scripts in `simu/src/` for generating and validating warehouse files:
+
+**Generate a warehouse:**
+
+```bash
+python generate_warehouse.py --size 50 --robots 20 --items 50 --goals 5 -o ../data/whouse50x50.txt
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--size` | required | Side length (NxN) |
+| `--robots` | required | Number of robots |
+| `--items` | `12` | Number of shelves/items |
+| `--goals` | `robots // 4` | Number of goal stations |
+| `-o` | auto-named | Output file path |
+
+**Validate a warehouse:**
+
+```bash
+python validate_warehouse.py ../data/whouse50x50.txt --items 50
+```
+
+**Scan all warehouses in `data/`:**
+
+```bash
+python validate_warehouse.py --scan-all            # structural info only
+python validate_warehouse.py --scan-all --sim       # also run a simulation on each
+python validate_warehouse.py --scan-all --sim --mode simple   # pick scheduling mode
+```
+
+Example output:
+
+```
+┌───────────────────┬─────────┬────────┬─────────┬───────┬───────┬───────────┐
+│ File              │ Size    │ Robots │ Shelves │ Goals │ Valid │ Sim Steps │
+├───────────────────┼─────────┼────────┼─────────┼───────┼───────┼───────────┤
+│ whouse.txt        │ 11x7    │ 4      │ 10      │ 5     │ YES   │ 156       │
+├───────────────────┼─────────┼────────┼─────────┼───────┼───────┼───────────┤
+│ whouse100x100.txt │ 100x100 │ 40     │ 100     │ 10    │ YES   │ 530       │
+├───────────────────┼─────────┼────────┼─────────┼───────┼───────┼───────────┤
+│ whouse10x10.txt   │ 10x10   │ 3      │ 10      │ 2     │ YES   │ 231       │
+├───────────────────┼─────────┼────────┼─────────┼───────┼───────┼───────────┤
+│ whouse20x20.txt   │ 20x20   │ 5      │ 15      │ 3     │ YES   │ 347       │
+├───────────────────┼─────────┼────────┼─────────┼───────┼───────┼───────────┤
+│ whouse50x50.txt   │ 50x50   │ 20     │ 50      │ 5     │ YES   │ 504       │
+└───────────────────┴─────────┴────────┴─────────┴───────┴───────┴───────────┘
+```
 
 ### Fault Simulation
 
