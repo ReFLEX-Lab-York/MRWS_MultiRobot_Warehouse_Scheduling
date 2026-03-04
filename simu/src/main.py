@@ -409,8 +409,20 @@ if __name__ == "__main__":
         default=os.path.join(DATA_DIR, "whouse.txt"),
         help="Path to warehouse file (default: data/whouse.txt).",
     )
+    parser.add_argument(
+        "-i",
+        "--items",
+        type=int,
+        default=None,
+        help="Number of items/shelves (default: auto-detect from warehouse file).",
+    )
     args = parser.parse_args()
     os.environ["ROBOTSIM_TRANSMIT"] = str(args.transmit)
+
+    # Auto-detect shelf count from the warehouse file if not specified
+    if args.items is None:
+        with open(args.warehouse) as f:
+            args.items = f.read().count('S')
 
     perfect_scenario = [0, 0, 0, 0]
 
@@ -421,7 +433,7 @@ if __name__ == "__main__":
 
         def make_warehouse():
             return warehouse.Warehouse(
-                args.warehouse, 10, 3, args.mode, perfect_scenario, True, 1000,
+                args.warehouse, args.items, 3, args.mode, perfect_scenario, True, 1000,
             )
 
         simu = make_warehouse()
@@ -430,7 +442,7 @@ if __name__ == "__main__":
         sim = Simulation(
             args.num_sims,
             args.warehouse,
-            10,
+            args.items,
             3,
             args.mode,
             perfect_scenario,
