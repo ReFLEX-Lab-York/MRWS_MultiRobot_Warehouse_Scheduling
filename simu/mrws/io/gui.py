@@ -545,6 +545,9 @@ class SimulationGUI(QMainWindow):
         # Initial draw
         self.refresh_display()
 
+        # Zoom to fit the entire grid once the window is shown
+        QTimer.singleShot(0, self._fit_to_grid)
+
     # -- toolbar -------------------------------------------------------------
 
     def _build_toolbar(self):
@@ -667,6 +670,7 @@ class SimulationGUI(QMainWindow):
         self._view._warehouse = self._warehouse
         self._update_button_styles()
         self.refresh_display()
+        QTimer.singleShot(0, self._fit_to_grid)
 
     def _on_speed_changed(self, value):
         # Invert: slider right = faster (lower interval)
@@ -709,6 +713,12 @@ class SimulationGUI(QMainWindow):
             self._btn_pause.setStyleSheet(self._STYLE_NORMAL)
 
         self.refresh_display()
+
+    def _fit_to_grid(self):
+        """Zoom the view so the entire warehouse grid is visible."""
+        scene_rect = self._scene.itemsBoundingRect()
+        if not scene_rect.isNull():
+            self._view.fitInView(scene_rect, Qt.AspectRatioMode.KeepAspectRatio)
 
     # -- display refresh -----------------------------------------------------
 
