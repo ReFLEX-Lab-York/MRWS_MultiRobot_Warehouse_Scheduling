@@ -28,19 +28,39 @@ class Warehouse:
         self._position_to_robot = {}
 
         self._robot_fault_rates = robot_fault_rates
+        self._robot_max_inventory = robot_max_inventory
 
+        # Generate items first (parse_warehouse_file assigns them to shelves)
         self._items = {}
         self._NUM_ITEMS = num_items
         udp.transmit_start()
         self.generate_items(self._NUM_ITEMS)
-        self._dynamic_deadline = 100
 
-        self._order_manager = OrderManager(5, 5, self._items,
-                                                        self._dynamic_deadline)
-
-        self._robot_max_inventory = robot_max_inventory
-        # Warehouse cell (x,y) is accessed via self._cells[y][x]
+        # Parse warehouse so entity counts are known before creating orders
         self._cells = self.parse_warehouse_file(w_house_filename)
+        self._width = len(self._cells[0])
+        self._height = len(self._cells)
+
+        # Derive order parameters from warehouse contents
+        num_robots = len(self._robots)
+        num_goals = len(self._order_stations)
+        num_shelves = len(self._shelves)
+
+        # Order size: bounded by robot inventory, goal capacity, and shelf count
+        order_size = max(1, min(robot_max_inventory, num_shelves))
+
+        # Number of initial orders: scale with goals and robots
+        num_init_orders = max(1, min(num_goals * 2, num_shelves // order_size))
+
+        # Number of dynamic orders: similar scale
+        num_dynamic_orders = max(1, min(num_goals, num_shelves // order_size))
+
+        # Dynamic deadline: scale with warehouse area and entity counts
+        self._dynamic_deadline = max(100, (self._width + self._height) * num_shelves // max(num_robots, 1))
+
+        self._order_manager = OrderManager(num_init_orders, num_dynamic_orders,
+                                           self._items, self._dynamic_deadline,
+                                           order_size)
 
         self._scheduler = Scheduler(self._order_manager,
                                               self._robots, self._shelves, self._order_stations,
@@ -48,9 +68,6 @@ class Warehouse:
                                               schedule_mode,
                                               self._robot_max_inventory, self._fault_tolerant_mode)
         self._scheduler.schedule(1)
-
-        self._width = len(self._cells[0])
-        self._height = len(self._cells)
 
         self.transmit_initial_warehouse_layout()
         self._total_steps = 0

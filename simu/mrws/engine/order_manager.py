@@ -3,7 +3,8 @@ import random
 import time
 
 class OrderManager:
-    def __init__(self, num_init_orders: int, num_dynamic_orders: int, item_set: dict, dynamic_deadline:int):
+    def __init__(self, num_init_orders: int, num_dynamic_orders: int, item_set: dict,
+                 dynamic_deadline: int, order_size: int = 4):
         self._num_init_orders = num_init_orders
         self._num_dynamic_orders = num_dynamic_orders
         self._item_set = item_set
@@ -16,7 +17,7 @@ class OrderManager:
         self._order_work_start_times = {}
         self._order_completion_times = {}
         self._all_orders = {}
-        self.generate_orders_uniform(num_init_orders, num_dynamic_orders, 4)
+        self.generate_orders_uniform(num_init_orders, num_dynamic_orders, order_size)
 
         for ordr in self._init_orders:
             self._order_intro_times[ordr.get_id()] = 0

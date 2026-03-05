@@ -11,12 +11,11 @@ Layout zones (left to right):
     - Cols 5+:   Shelf pairs (SS) separated by aisle columns (X)
     - Last col:  Border (X)
 
-Horizontal cross-aisles are inserted every ~12 rows.
+Horizontal cross-aisles are inserted at scaled intervals.
 Row 0 and row N-1 are all-X borders.
 """
 
 import argparse
-import math
 import os
 import sys
 
@@ -25,13 +24,13 @@ from validate_warehouse import validate_warehouse, print_report
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 
-def generate_warehouse(side_len, robot_num, num_items=12, num_goals=None, output=None):
+def generate_warehouse(side_len, robot_num, num_items=None, num_goals=None, output=None):
     """Generate an NxN warehouse file with the given parameters.
 
     Args:
         side_len: Width and height of the square grid.
         robot_num: Number of robots to place.
-        num_items: Number of shelves (each holds one item).
+        num_items: Number of shelves. Defaults to ~70% of shelf capacity.
         num_goals: Number of goal/order stations. Defaults to max(robot_num // 4, 1).
         output: Output file path. Defaults to DATA_DIR/wt{N}x{N}r{R}.txt.
 
@@ -66,11 +65,9 @@ def generate_warehouse(side_len, robot_num, num_items=12, num_goals=None, output
     # --- Build the grid ---
     grid = [['X'] * side_len for _ in range(side_len)]
 
-    # Cross-aisle rows: every ~12 rows (all X, no entities placed)
-    cross_aisle_interval = 12
-    cross_aisle_rows = set()
-    cross_aisle_rows.add(0)
-    cross_aisle_rows.add(side_len - 1)
+    # Cross-aisle interval scales with warehouse size
+    cross_aisle_interval = min(12, max(6, side_len // 6))
+    cross_aisle_rows = {0, side_len - 1}
     row = cross_aisle_interval
     while row < side_len - 1:
         cross_aisle_rows.add(row)
@@ -89,33 +86,44 @@ def generate_warehouse(side_len, robot_num, num_items=12, num_goals=None, output
     for r in robot_positions:
         grid[r][2] = 'R'
 
-    # --- Place shelves in cols 5+ with SS|X pattern ---
-    # Determine shelf columns
+    # --- Determine shelf columns (SS|X pattern from col 5+) ---
     shelf_col_pairs = []
     c = 5
     while c + 1 < side_len - 1:
         shelf_col_pairs.append((c, c + 1))
         c += 3  # 2 shelf cols + 1 aisle col
 
-    # Collect all candidate shelf positions (distribute evenly across columns)
-    shelf_positions = []
-    for c1, c2 in shelf_col_pairs:
-        for r in range(1, side_len - 1):
-            if r not in cross_aisle_rows:
-                shelf_positions.append((r, c1))
-                shelf_positions.append((r, c2))
+    # Shelf rows: interior rows that aren't cross-aisles
+    shelf_rows = [r for r in range(1, side_len - 1) if r not in cross_aisle_rows]
+    max_shelf_capacity = len(shelf_rows) * len(shelf_col_pairs) * 2
 
-    if len(shelf_positions) < num_items:
+    if max_shelf_capacity == 0:
+        raise ValueError(f"No shelf positions available in a {side_len}x{side_len} warehouse")
+
+    # Default num_items: ~70% of shelf capacity
+    if num_items is None:
+        num_items = max(int(max_shelf_capacity * 0.7), 1)
+
+    if max_shelf_capacity < num_items:
         raise ValueError(
             f"Cannot fit {num_items} shelves in a {side_len}x{side_len} warehouse "
-            f"(only {len(shelf_positions)} shelf positions available)"
+            f"(only {max_shelf_capacity} shelf positions available)"
         )
 
-    # Spread shelves evenly across available positions
-    selected = _spread_positions(list(range(len(shelf_positions))), num_items)
-    for idx in selected:
-        r, c = shelf_positions[idx]
-        grid[r][c] = 'S'
+    # --- Place shelves densely: fill column pairs top-to-bottom ---
+    placed = 0
+    for c1, c2 in shelf_col_pairs:
+        for r in shelf_rows:
+            if placed >= num_items:
+                break
+            grid[r][c1] = 'S'
+            placed += 1
+            if placed >= num_items:
+                break
+            grid[r][c2] = 'S'
+            placed += 1
+        if placed >= num_items:
+            break
 
     # --- Write the file ---
     # File format: first line = highest y (row side_len-1), last line = y=0
@@ -147,6 +155,8 @@ def _spread_positions(positions, count):
         raise ValueError(f"Cannot select {count} from {n} available positions")
     if count == n:
         return list(positions)
+    if count == 1:
+        return [positions[n // 2]]
     # Evenly spaced indices
     return [positions[round(i * (n - 1) / (count - 1))] for i in range(count)]
 
@@ -157,7 +167,10 @@ def main():
     )
     parser.add_argument("--size", type=int, required=True, help="Side length (NxN)")
     parser.add_argument("--robots", type=int, required=True, help="Number of robots")
-    parser.add_argument("--items", type=int, default=12, help="Number of shelves/items (default: 12)")
+    parser.add_argument(
+        "--items", type=int, default=None,
+        help="Number of shelves/items (default: ~70%% of shelf capacity)"
+    )
     parser.add_argument(
         "--goals", type=int, default=None,
         help="Number of goal stations (default: robots // 4, min 1)"
