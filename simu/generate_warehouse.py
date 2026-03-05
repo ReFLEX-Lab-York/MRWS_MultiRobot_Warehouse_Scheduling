@@ -31,7 +31,7 @@ def generate_warehouse(side_len, robot_num, num_items=None, num_goals=None, outp
         side_len: Width and height of the square grid.
         robot_num: Number of robots to place.
         num_items: Number of shelves. Defaults to ~70% of shelf capacity.
-        num_goals: Number of goal/order stations. Defaults to max(robot_num // 4, 1).
+        num_goals: Number of goal/order stations. Defaults to robot_num (1 per robot).
         output: Output file path. Defaults to DATA_DIR/wt{N}x{N}r{R}.txt.
 
     Returns:
@@ -41,7 +41,7 @@ def generate_warehouse(side_len, robot_num, num_items=None, num_goals=None, outp
         ValueError: If the warehouse is too small for the requested entities.
     """
     if num_goals is None:
-        num_goals = max(robot_num // 4, 1)
+        num_goals = max(robot_num, 1)
 
     if output is None:
         output = os.path.join(DATA_DIR, f"wt{side_len}x{side_len}r{robot_num}.txt")

@@ -46,14 +46,16 @@ class Warehouse:
         num_goals = len(self._order_stations)
         num_shelves = len(self._shelves)
 
-        # Order size: bounded by robot inventory, goal capacity, and shelf count
+        # Order size: bounded by robot inventory and shelf count
         order_size = max(1, min(robot_max_inventory, num_shelves))
+        max_orders = max(1, num_shelves // order_size)
 
-        # Number of initial orders: scale with goals and robots
-        num_init_orders = max(1, min(num_goals * 2, num_shelves // order_size))
+        # Initial orders: at least num_robots so every robot can get a task
+        num_init_orders = min(max(num_robots, num_goals * 2), max_orders)
 
-        # Number of dynamic orders: similar scale
-        num_dynamic_orders = max(1, min(num_goals, num_shelves // order_size))
+        # Dynamic orders: scale with goals, capped by remaining capacity
+        num_dynamic_orders = max(1, min(num_goals, max_orders - num_init_orders))
+        num_dynamic_orders = max(0, num_dynamic_orders)
 
         # Dynamic deadline: scale with warehouse area and entity counts
         self._dynamic_deadline = max(100, (self._width + self._height) * num_shelves // max(num_robots, 1))
