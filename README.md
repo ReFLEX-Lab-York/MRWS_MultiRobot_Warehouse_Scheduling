@@ -30,14 +30,14 @@ Visualisation:
 
 ## Usage
 
-Run simulations from the `simu/src/` directory:
+Run simulations from the `simu/` directory:
 
 ```bash
-cd simu/src
+cd simu
 python main.py                # Run 1000 simulations (default)
 python main.py -n 1           # Run a single simulation
 python main.py -t             # Run with UDP transmission to Unity visualiser
-python main.py -g             # Launch the debug GUI
+python main.py -g             # Launch the MRWS GUI
 python main.py -g -m multi-robot   # GUI with a specific scheduling mode
 ```
 
@@ -51,20 +51,25 @@ python main.py -g -m multi-robot   # GUI with a specific scheduling mode
 | `-t` | `--transmit` | Enable UDP transmission to Unity visualiser | off |
 | `-g` | `--gui` | Launch PyQt6 debug GUI (ignores `-n`) | off |
 
-### Debug GUI
+### MRWS GUI
 
-Launch with `-g` to open a real-time PyQt6 debug window:
+Launch with `-g` to open the MRWS GUI (PyQt6), which starts maximized:
 
 ```bash
 python main.py -g
+python main.py -g -m multi-robot   # with a specific scheduling mode
 ```
 
 Features:
-- **Grid view** — warehouse rendered with color-coded robots, shelves, goals, homes, and walls. Scroll to zoom, drag to pan.
-- **Robot inspector** — click any robot to see its position, target, schedule queue, inventory, fault status, and A* path overlay.
-- **Order panel** — tracks active, backlog, and completed orders with robot assignments and item details.
+- **Grid view** — warehouse rendered with color-coded robots, shelves, goals, homes, and walls. Scroll to zoom, drag to pan. Click a robot to select it.
+- **Robot inspector** (right dock) — selected robot's position, target, schedule queue, inventory, fault status, and A* path overlay.
+- **Order panel** (right dock) — tracks active, backlog, and completed orders with robot assignments and item details.
+- **Stats panel** (right dock, bottom) — line chart of simulation metrics over steps with toggleable series via checkboxes:
+  - Active orders (green), Backlog (yellow), Completed (grey), Idle robots (blue), Faulted robots (red), Items carried (cyan)
+  - Summary bar: utilization %, completed count, throughput, avg completion time, fault count, items in transit
 - **Fault overlays** — robots change color by fault type (green=healthy, yellow=battery low, red=critical, orange=actuator, purple=sensor) with letter indicators.
-- **Playback controls** — Play / Pause / Step buttons, speed slider, and step counter.
+- **Playback controls** — Play / Pause / Step / Reset buttons, speed dropdown (0.1x, 0.2x, 0.5x, **1.0x**, 2.0x, 5.0x, 10.0x), and step counter.
+- **Keyboard shortcuts** — Space: play/pause, S: step, R: reset.
 
 Use `-m` to select a scheduling mode: `simple`, `simple-interrupt` (default), `multi-robot`, or `multi-robot-genetic`.
 
@@ -124,7 +129,7 @@ Custom layouts can be created as `.txt` files in the `simu/data/` directory. The
 
 ### Warehouse Tools
 
-Two standalone scripts in `simu/src/` for generating and validating warehouse files:
+Two standalone scripts in `simu/` for generating and validating warehouse files:
 
 **Generate a warehouse:**
 
@@ -136,8 +141,8 @@ python generate_warehouse.py --size 50 --robots 20 --items 50 --goals 5 -o ../da
 |------|---------|-------------|
 | `--size` | required | Side length (NxN) |
 | `--robots` | required | Number of robots |
-| `--items` | `12` | Number of shelves/items |
-| `--goals` | `robots // 4` | Number of goal stations |
+| `--items` | ~70% shelf capacity | Number of shelves/items |
+| `--goals` | `robots` | Number of goal stations |
 | `-o` | auto-named | Output file path |
 
 **Validate a warehouse:**

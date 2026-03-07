@@ -24,12 +24,13 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QToolBar,
     QPushButton,
-    QSlider,
     QLabel,
     QDockWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QSplitter,
+    QCheckBox,
+    QSlider,
 )
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
 from PyQt6.QtGui import (
@@ -509,14 +510,18 @@ class StatsChartWidget(QWidget):
 
     _COLOR_ACTIVE = QColor(50, 180, 50)
     _COLOR_BACKLOG = QColor(200, 170, 30)
-    _COLOR_COMPLETED = QColor(100, 100, 100)
+    _COLOR_COMPLETED = QColor(130, 130, 130)
     _COLOR_IDLE = QColor(50, 120, 220)
+    _COLOR_FAULTED = QColor(220, 50, 50)
+    _COLOR_CARRYING = QColor(0, 190, 190)
 
     _SERIES_INFO = [
         ("_history_active", _COLOR_ACTIVE, "Active"),
         ("_history_backlog", _COLOR_BACKLOG, "Backlog"),
-        ("_history_completed", _COLOR_COMPLETED, "Completed"),
+        ("_history_completed", _COLOR_COMPLETED, "Done"),
         ("_history_idle", _COLOR_IDLE, "Idle"),
+        ("_history_faulted", _COLOR_FAULTED, "Faulted"),
+        ("_history_carrying", _COLOR_CARRYING, "Carrying"),
     ]
 
     def __init__(self, parent=None):
@@ -525,25 +530,47 @@ class StatsChartWidget(QWidget):
         self._history_backlog = []
         self._history_completed = []
         self._history_idle = []
+        self._history_faulted = []
+        self._history_carrying = []
+        # All series visible by default
+        self._visible = {attr for attr, _, _ in self._SERIES_INFO}
         self.setMinimumHeight(100)
 
+    def set_visible(self, attr, on):
+        """Toggle visibility of a series by its attribute name."""
+        if on:
+            self._visible.add(attr)
+        else:
+            self._visible.discard(attr)
+        self.update()
+
     def reset(self):
-        self._history_active.clear()
-        self._history_backlog.clear()
-        self._history_completed.clear()
-        self._history_idle.clear()
+        for attr, _, _ in self._SERIES_INFO:
+            getattr(self, attr).clear()
         self.update()
 
     def record(self, warehouse):
         scheduler = warehouse.get_scheduler()
         order_manager = warehouse.get_order_manager()
-        num_robots = len(warehouse._robots)
+        robots = warehouse._robots
+        num_robots = len(robots)
         assigned = len(scheduler._assigned_robots)
+
+        # Count faulted robots and total items being carried
+        faulted = 0
+        carrying = 0
+        for robot_obj in robots.values():
+            if (robot_obj.battery_faulted_critical or robot_obj.battery_faulted
+                    or robot_obj.actuators_faulted or robot_obj.sensors_faulted):
+                faulted += 1
+            carrying += robot_obj.get_inventory_usage()
 
         self._history_active.append(len(scheduler._orders_active))
         self._history_backlog.append(len(scheduler._orders_backlog))
         self._history_completed.append(len(order_manager.get_order_finish_work_times()))
         self._history_idle.append(num_robots - assigned)
+        self._history_faulted.append(faulted)
+        self._history_carrying.append(carrying)
         self.update()
 
     def paintEvent(self, event: QPaintEvent):
@@ -575,9 +602,13 @@ class StatsChartWidget(QWidget):
             p.end()
             return
 
-        # Y-axis max (round up for nice ticks)
-        raw_max = max(max(max(getattr(self, attr)) for attr, _, _ in self._SERIES_INFO
-                         if getattr(self, attr)), 1)
+        # Y-axis max (only from visible series)
+        visible_maxes = [
+            max(getattr(self, attr))
+            for attr, _, _ in self._SERIES_INFO
+            if attr in self._visible and getattr(self, attr)
+        ]
+        raw_max = max(max(visible_maxes) if visible_maxes else 0, 1)
         y_max = self._nice_ceil(raw_max)
 
         # Horizontal grid lines + y-axis labels
@@ -626,6 +657,8 @@ class StatsChartWidget(QWidget):
         # Draw series using individual line segments (avoids QPainterPath
         # anti-aliasing artifacts that can produce visual gaps).
         for attr, color, _label in self._SERIES_INFO:
+            if attr not in self._visible:
+                continue
             data = getattr(self, attr)
             if not data:
                 continue
@@ -663,20 +696,24 @@ class StatsChartWidget(QWidget):
                     p.drawLine(QPointF(prev_x, prev_y), QPointF(x, y))
                 prev_x, prev_y = x, y
 
-        # Legend (top-left inside chart, with background)
-        lx = cx + 4
-        ly = cy + 4
-        lw, lh = 78, len(self._SERIES_INFO) * 13 + 4
-        p.setPen(QPen(QColor(200, 200, 200)))
-        p.setBrush(QBrush(QColor(255, 255, 255, 210)))
-        p.drawRect(lx, ly, lw, lh)
-        p.setFont(font_small)
-        for i, (_attr, color, label) in enumerate(self._SERIES_INFO):
-            row_y = ly + 4 + i * 13
-            p.setPen(QPen(color, 2))
-            p.drawLine(lx + 3, row_y + 5, lx + 14, row_y + 5)
-            p.setPen(QPen(QColor(40, 40, 40)))
-            p.drawText(lx + 18, row_y + 9, label)
+        # Legend (top-left inside chart, with background) — only visible series
+        visible_series = [(a, c, l) for a, c, l in self._SERIES_INFO if a in self._visible]
+        if visible_series:
+            row_h = 12
+            lx = cx + 4
+            ly = cy + 4
+            lw = 80
+            lh = len(visible_series) * row_h + 6
+            p.setPen(QPen(QColor(200, 200, 200)))
+            p.setBrush(QBrush(QColor(255, 255, 255, 220)))
+            p.drawRect(lx, ly, lw, lh)
+            p.setFont(font_small)
+            for i, (_attr, color, label) in enumerate(visible_series):
+                row_y = ly + 3 + i * row_h
+                p.setPen(QPen(color, 2))
+                p.drawLine(lx + 3, row_y + 5, lx + 14, row_y + 5)
+                p.setPen(QPen(QColor(40, 40, 40)))
+                p.drawText(lx + 18, row_y + 9, label)
 
         p.end()
 
@@ -703,20 +740,93 @@ class StatsChartWidget(QWidget):
 # StatsPanel  (dock panel wrapping the chart)
 # ---------------------------------------------------------------------------
 class StatsPanel(QWidget):
-    """Dock panel containing the stats chart."""
+    """Dock panel containing toggles, chart, and a summary row."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
+
+        # Toggle checkboxes for each series
+        toggles_layout = QHBoxLayout()
+        toggles_layout.setContentsMargins(2, 0, 2, 0)
+        toggles_layout.setSpacing(6)
         self._chart = StatsChartWidget()
-        layout.addWidget(self._chart)
+        for attr, color, label in StatsChartWidget._SERIES_INFO:
+            cb = QCheckBox(label)
+            cb.setChecked(True)
+            cb.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            cb.setStyleSheet(f"color: {color.name()}; font-size: 10px;")
+            cb.toggled.connect(lambda on, a=attr: self._chart.set_visible(a, on))
+            toggles_layout.addWidget(cb)
+        toggles_layout.addStretch()
+        layout.addLayout(toggles_layout)
+
+        layout.addWidget(self._chart, stretch=1)
+
+        self._summary = QLabel("")
+        self._summary.setStyleSheet(
+            "font-size: 10px; color: #444; padding: 2px 4px;"
+            "background: #f6f6f6; border-top: 1px solid #ddd;"
+        )
+        self._summary.setWordWrap(True)
+        layout.addWidget(self._summary)
 
     def record(self, warehouse):
         self._chart.record(warehouse)
+        self._update_summary(warehouse)
 
     def reset(self):
         self._chart.reset()
+        self._summary.setText("")
+
+    def _update_summary(self, warehouse):
+        scheduler = warehouse.get_scheduler()
+        order_manager = warehouse.get_order_manager()
+        robots = warehouse._robots
+        num_robots = len(robots)
+        step = warehouse.get_total_steps()
+
+        # Utilization: fraction of robots currently assigned
+        assigned = len(scheduler._assigned_robots)
+        util_pct = int(100 * assigned / num_robots) if num_robots else 0
+
+        # Completed count
+        completed = order_manager.get_order_finish_work_times()
+        n_done = len(completed)
+
+        # Throughput: orders completed per 100 steps
+        throughput = (n_done / step * 100) if step > 0 else 0
+
+        # Average completion time
+        if completed:
+            intro = order_manager._order_intro_times
+            avg_time = sum(
+                ct - intro.get(oid, 0) for oid, ct in completed.items()
+            ) / n_done
+        else:
+            avg_time = 0
+
+        # Faults
+        faults = sum(
+            1 for r in robots.values()
+            if r.battery_faulted_critical or r.battery_faulted
+            or r.actuators_faulted or r.sensors_faulted
+        )
+
+        # Total items in transit
+        carrying = sum(r.get_inventory_usage() for r in robots.values())
+
+        parts = [
+            f"Util: {util_pct}%",
+            f"Done: {n_done}",
+            f"Thru: {throughput:.1f}/100s",
+            f"Avg: {avg_time:.0f}s",
+            f"Faults: {faults}",
+            f"Carry: {carrying}",
+        ]
+        self._summary.setText("  |  ".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -733,10 +843,23 @@ class SimulationGUI(QMainWindow):
         self._sim_running = False
         self._sim_finished = False
         self._step_counter = 0
-        self._timer_interval_ms = 200
 
-        self.setWindowTitle("MRWS Debug GUI")
-        self.resize(1200, 800)
+        # Speed presets: (label, timer interval in ms)
+        # 1.0x = 200ms base interval
+        self._speed_presets = [
+            ("0.1x", 2000),
+            ("0.2x", 1000),
+            ("0.5x", 400),
+            ("1.0x", 200),
+            ("2.0x", 100),
+            ("5.0x", 40),
+            ("10.0x", 20),
+        ]
+        self._speed_index = 3  # default 1.0x
+        self._timer_interval_ms = self._speed_presets[self._speed_index][1]
+
+        self.setWindowTitle("MRWS GUI")
+        self.showMaximized()
 
         # -- Scene / View --
         self._scene = WarehouseScene(warehouse)
@@ -808,14 +931,17 @@ class SimulationGUI(QMainWindow):
         toolbar.addWidget(QLabel(" Speed: "))
         self._speed_slider = QSlider(Qt.Orientation.Horizontal)
         self._speed_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._speed_slider.setMinimum(10)
-        self._speed_slider.setMaximum(1000)
-        self._speed_slider.setValue(self._timer_interval_ms)
+        self._speed_slider.setMinimum(0)
+        self._speed_slider.setMaximum(len(self._speed_presets) - 1)
+        self._speed_slider.setValue(self._speed_index)
+        self._speed_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._speed_slider.setTickInterval(1)
         self._speed_slider.setFixedWidth(150)
         self._speed_slider.valueChanged.connect(self._on_speed_changed)
         toolbar.addWidget(self._speed_slider)
 
-        self._speed_label = QLabel(f" {self._timer_interval_ms}ms ")
+        self._speed_label = QLabel(f" {self._speed_presets[self._speed_index][0]} ")
+        self._speed_label.setStyleSheet("font-weight: bold;")
         toolbar.addWidget(self._speed_label)
 
         toolbar.addSeparator()
@@ -899,10 +1025,10 @@ class SimulationGUI(QMainWindow):
         self._update_button_styles()
         self.refresh_display()
 
-    def _on_speed_changed(self, value):
-        # Invert: slider right = faster (lower interval)
-        self._timer_interval_ms = 1010 - value
-        self._speed_label.setText(f" {self._timer_interval_ms}ms ")
+    def _on_speed_changed(self, index):
+        self._speed_index = index
+        self._timer_interval_ms = self._speed_presets[index][1]
+        self._speed_label.setText(f" {self._speed_presets[index][0]} ")
         if self._timer.isActive():
             self._timer.setInterval(self._timer_interval_ms)
 

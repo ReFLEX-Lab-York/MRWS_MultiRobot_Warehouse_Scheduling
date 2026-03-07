@@ -81,7 +81,7 @@ simu/
 
     io/
       udp.py                       # UDP transmit functions
-      gui.py                       # PyQt6 debug GUI
+      gui.py                       # PyQt6 GUI (MRWS GUI)
 ```
 
 ### Split File Pattern
@@ -166,6 +166,15 @@ When `fault_tolerant_mode=True`, the scheduler calls `reassign_orders_if_faulted
 2. **Head-on collision**: Lower-priority robot moves aside (perpendicular)
 3. **Cyclic deadlock**: Detected by following robot-target chains; broken by priority
 
+### GUI (`mrws/io/gui.py`)
+
+The PyQt6 GUI ("MRWS GUI") launches maximized and provides:
+- **Central view**: zoomable/draggable warehouse grid (scroll to zoom, drag to pan, click to select robots)
+- **Right dock panels**: Robot Inspector, Orders, Stats (top to bottom)
+- **Stats panel**: line chart with toggleable series (Active, Backlog, Done, Idle, Faulted, Carrying) via checkboxes; x-axis = simulation steps; summary bar with utilization %, throughput, avg completion time, fault count, items in transit
+- **Bottom toolbar**: Play/Pause (green/yellow highlight), Step, Reset, speed dropdown (0.1x–10.0x, default 1.0x), step counter, status
+- **Keyboard shortcuts**: Space = play/pause toggle, S = step, R = reset
+
 ### Visualization Protocol
 
 UDP JSON messages sent to Unity on `127.0.0.1:35891` via `mrws/io/udp.py`. Only transmits when `ROBOTSIM_TRANSMIT` env var is `"True"`.
@@ -195,4 +204,5 @@ Warehouse files are in `simu/data/`.
 - Python >= 3.11
 - pygad (genetic algorithm library)
 - matplotlib (for result visualization)
+- PyQt6 (for the GUI)
 - Unity 6000.0.41f1 (for viz component, in `viz/` directory)
