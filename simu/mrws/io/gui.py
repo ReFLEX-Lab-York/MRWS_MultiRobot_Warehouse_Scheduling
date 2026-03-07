@@ -43,6 +43,7 @@ from PyQt6.QtGui import (
     QMouseEvent,
     QPainter,
     QKeyEvent,
+    QPaintEvent,
 )
 
 
@@ -497,6 +498,228 @@ class OrderPanel(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# StatsChartWidget  (used inside the Stats dock panel)
+# ---------------------------------------------------------------------------
+class StatsChartWidget(QWidget):
+    """Draws a line chart of simulation metrics over steps."""
+
+    _PADDING = 6
+    _Y_AXIS_W = 36   # width reserved for y-axis labels
+    _X_AXIS_H = 18   # height reserved for x-axis labels
+
+    _COLOR_ACTIVE = QColor(50, 180, 50)
+    _COLOR_BACKLOG = QColor(200, 170, 30)
+    _COLOR_COMPLETED = QColor(100, 100, 100)
+    _COLOR_IDLE = QColor(50, 120, 220)
+
+    _SERIES_INFO = [
+        ("_history_active", _COLOR_ACTIVE, "Active"),
+        ("_history_backlog", _COLOR_BACKLOG, "Backlog"),
+        ("_history_completed", _COLOR_COMPLETED, "Completed"),
+        ("_history_idle", _COLOR_IDLE, "Idle"),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._history_active = []
+        self._history_backlog = []
+        self._history_completed = []
+        self._history_idle = []
+        self.setMinimumHeight(100)
+
+    def reset(self):
+        self._history_active.clear()
+        self._history_backlog.clear()
+        self._history_completed.clear()
+        self._history_idle.clear()
+        self.update()
+
+    def record(self, warehouse):
+        scheduler = warehouse.get_scheduler()
+        order_manager = warehouse.get_order_manager()
+        num_robots = len(warehouse._robots)
+        assigned = len(scheduler._assigned_robots)
+
+        self._history_active.append(len(scheduler._orders_active))
+        self._history_backlog.append(len(scheduler._orders_backlog))
+        self._history_completed.append(len(order_manager.get_order_finish_work_times()))
+        self._history_idle.append(num_robots - assigned)
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        pad = self._PADDING
+
+        # Chart area bounds
+        cx = pad + self._Y_AXIS_W
+        cy = pad
+        cw = w - cx - pad
+        ch = h - cy - pad - self._X_AXIS_H
+
+        if cw < 30 or ch < 30:
+            p.end()
+            return
+
+        # Background
+        p.setBrush(QBrush(QColor(250, 250, 250)))
+        p.setPen(QPen(QColor(200, 200, 200), 1))
+        p.drawRect(cx, cy, cw, ch)
+
+        n = len(self._history_active)
+        if n == 0:
+            p.setPen(QPen(QColor(150, 150, 150)))
+            p.setFont(QFont("Monospace", 8))
+            p.drawText(cx + 8, cy + ch // 2, "No data yet")
+            p.end()
+            return
+
+        # Y-axis max (round up for nice ticks)
+        raw_max = max(max(max(getattr(self, attr)) for attr, _, _ in self._SERIES_INFO
+                         if getattr(self, attr)), 1)
+        y_max = self._nice_ceil(raw_max)
+
+        # Horizontal grid lines + y-axis labels
+        font_small = QFont("Monospace", 7)
+        p.setFont(font_small)
+        num_y_ticks = 4
+        for i in range(num_y_ticks + 1):
+            frac = i / num_y_ticks
+            gy = cy + ch - int(ch * frac)
+            if 0 < i < num_y_ticks + 1:
+                p.setPen(QPen(QColor(220, 220, 220), 1, Qt.PenStyle.DotLine))
+                p.drawLine(cx, gy, cx + cw, gy)
+            val = int(y_max * frac)
+            p.setPen(QPen(QColor(100, 100, 100)))
+            p.drawText(pad, gy + 4, str(val))
+
+        # X-axis: step labels
+        x_denom = max(n - 1, 1)
+        num_ticks = min(5, n)
+        if num_ticks >= 2:
+            for i in range(num_ticks):
+                step_idx = int(i * (n - 1) / (num_ticks - 1))
+                lx = cx + int(step_idx / x_denom * cw)
+                # Vertical grid line
+                p.setPen(QPen(QColor(220, 220, 220), 1, Qt.PenStyle.DotLine))
+                p.drawLine(lx, cy, lx, cy + ch)
+                # Label
+                p.setPen(QPen(QColor(100, 100, 100)))
+                p.setFont(font_small)
+                label = str(step_idx + 1)
+                p.drawText(max(lx - 10, cx), cy + ch + 12, label)
+
+        # Downsample: keep at most `max_pts` points per series.
+        # For each bucket, keep the min and max to preserve spikes.
+        max_pts = max(int(cw // 2), 40)
+        if n > max_pts:
+            bucket_size = n / max_pts
+            buckets = []
+            for b in range(max_pts):
+                lo = int(b * bucket_size)
+                hi = min(int((b + 1) * bucket_size), n)
+                buckets.append((lo, hi))
+        else:
+            buckets = None
+
+        # Draw series using individual line segments (avoids QPainterPath
+        # anti-aliasing artifacts that can produce visual gaps).
+        for attr, color, _label in self._SERIES_INFO:
+            data = getattr(self, attr)
+            if not data:
+                continue
+            pen = QPen(color, 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+
+            # Build the list of (index, value) to plot
+            if buckets is not None:
+                points = []
+                for lo, hi in buckets:
+                    chunk = data[lo:hi]
+                    min_val = min(chunk)
+                    max_val = max(chunk)
+                    min_idx = lo + chunk.index(min_val)
+                    max_idx = lo + chunk.index(max_val)
+                    if min_idx <= max_idx:
+                        points.append((min_idx, min_val))
+                        if min_idx != max_idx:
+                            points.append((max_idx, max_val))
+                    else:
+                        points.append((max_idx, max_val))
+                        points.append((min_idx, min_val))
+                # Always include last point
+                points.append((n - 1, data[-1]))
+            else:
+                points = [(i, data[i]) for i in range(n)]
+
+            # Draw connected line segments
+            prev_x = prev_y = None
+            for idx, val in points:
+                x = cx + (idx / x_denom) * cw
+                y = cy + ch - (val / y_max) * ch
+                if prev_x is not None:
+                    p.drawLine(QPointF(prev_x, prev_y), QPointF(x, y))
+                prev_x, prev_y = x, y
+
+        # Legend (top-left inside chart, with background)
+        lx = cx + 4
+        ly = cy + 4
+        lw, lh = 78, len(self._SERIES_INFO) * 13 + 4
+        p.setPen(QPen(QColor(200, 200, 200)))
+        p.setBrush(QBrush(QColor(255, 255, 255, 210)))
+        p.drawRect(lx, ly, lw, lh)
+        p.setFont(font_small)
+        for i, (_attr, color, label) in enumerate(self._SERIES_INFO):
+            row_y = ly + 4 + i * 13
+            p.setPen(QPen(color, 2))
+            p.drawLine(lx + 3, row_y + 5, lx + 14, row_y + 5)
+            p.setPen(QPen(QColor(40, 40, 40)))
+            p.drawText(lx + 18, row_y + 9, label)
+
+        p.end()
+
+    @staticmethod
+    def _nice_ceil(value):
+        """Round up to a 'nice' number for axis ticks."""
+        if value <= 0:
+            return 1
+        import math
+        mag = 10 ** math.floor(math.log10(value))
+        residual = value / mag
+        if residual <= 1:
+            nice = 1
+        elif residual <= 2:
+            nice = 2
+        elif residual <= 5:
+            nice = 5
+        else:
+            nice = 10
+        return int(nice * mag)
+
+
+# ---------------------------------------------------------------------------
+# StatsPanel  (dock panel wrapping the chart)
+# ---------------------------------------------------------------------------
+class StatsPanel(QWidget):
+    """Dock panel containing the stats chart."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        self._chart = StatsChartWidget()
+        layout.addWidget(self._chart)
+
+    def record(self, warehouse):
+        self._chart.record(warehouse)
+
+    def reset(self):
+        self._chart.reset()
+
+
+# ---------------------------------------------------------------------------
 # SimulationGUI (main window)
 # ---------------------------------------------------------------------------
 class SimulationGUI(QMainWindow):
@@ -535,6 +758,13 @@ class SimulationGUI(QMainWindow):
         dock_orders.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_orders)
 
+        # -- Right dock (bottom): Stats Panel --
+        self._stats_panel = StatsPanel()
+        dock_stats = QDockWidget("Stats", self)
+        dock_stats.setWidget(self._stats_panel)
+        dock_stats.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_stats)
+
         # -- Bottom toolbar --
         self._build_toolbar()
 
@@ -544,9 +774,6 @@ class SimulationGUI(QMainWindow):
 
         # Initial draw
         self.refresh_display()
-
-        # Zoom to fit the entire grid once the window is shown
-        QTimer.singleShot(0, self._fit_to_grid)
 
     # -- toolbar -------------------------------------------------------------
 
@@ -668,9 +895,9 @@ class SimulationGUI(QMainWindow):
         self._scene._width = self._warehouse._width
         self._scene._height = self._warehouse._height
         self._view._warehouse = self._warehouse
+        self._stats_panel.reset()
         self._update_button_styles()
         self.refresh_display()
-        QTimer.singleShot(0, self._fit_to_grid)
 
     def _on_speed_changed(self, value):
         # Invert: slider right = faster (lower interval)
@@ -703,6 +930,7 @@ class SimulationGUI(QMainWindow):
             return
 
         self._step_counter = self._warehouse.get_total_steps()
+        self._stats_panel.record(self._warehouse)
 
         if done:
             self._sim_finished = True
@@ -713,12 +941,6 @@ class SimulationGUI(QMainWindow):
             self._btn_pause.setStyleSheet(self._STYLE_NORMAL)
 
         self.refresh_display()
-
-    def _fit_to_grid(self):
-        """Zoom the view so the entire warehouse grid is visible."""
-        scene_rect = self._scene.itemsBoundingRect()
-        if not scene_rect.isNull():
-            self._view.fitInView(scene_rect, Qt.AspectRatioMode.KeepAspectRatio)
 
     # -- display refresh -----------------------------------------------------
 
