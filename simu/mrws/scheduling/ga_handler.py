@@ -1,7 +1,7 @@
-import customexceptions
+from mrws.exceptions import SimulationError
+from mrws.entities.inventory import InventoryEntity
 import copy
 import math
-import entitywithinventory
 
 
 def encode_string_utf8_to_int(string1):
@@ -57,8 +57,6 @@ def return_how_close(orders, inventories):
 
     return (float(correct_ctr) / total_items)
 
-
-
 def schedules_have_not_completed(schedules):
     for schedule in schedules:
         if not is_schedule_complete(schedule):
@@ -70,15 +68,15 @@ def is_schedule_complete(schedule):
         return True
     return False
 
+class MockRobot(InventoryEntity):
+    def __init__(self, name, inv_size):
+        super().__init__(name, inv_size, False)
+
+class MockGoal(InventoryEntity):
+    def __init__(self, name):
+        super().__init__(name, math.inf, False)
+
 def fitness_func(ga_instance, solution, solution_idx):
-    class MockRobot(entitywithinventory.InventoryEntity):
-        def __init__(self, name, inv_size):
-            super().__init__(name, inv_size, False)
-
-    class MockGoal(entitywithinventory.InventoryEntity):
-        def __init__(self, name):
-            super().__init__(name, math.inf, False)
-
     PENALTY_SAME_ROBOT_MULTIPLE_TIMES = -2
     PENALTY_NO_START_WITH_ROBOT = -3
     PENALTY_NO_ROBOT = -3
@@ -91,7 +89,7 @@ def fitness_func(ga_instance, solution, solution_idx):
     for int_gene in solution:
         decoded = decode_utf8_int_to_string(int_gene)
         if decoded not in handler.get_all_string_genes() and "robot" not in decoded:
-            raise customexceptions.SimulationError("Invalid gene in solution %s" % decoded)
+            raise SimulationError("Invalid gene in solution %s" % decoded)
         solution_decoded.append(decoded)
 
     robot_indices = []
@@ -195,14 +193,14 @@ def fitness_func(ga_instance, solution, solution_idx):
                     else:
                         order_items.remove(item)
                 correct_pickups_so_far += 1
-            except customexceptions.SimulationError:
+            except SimulationError:
                 return -1 + (float(correct_pickups_so_far) / order_total_items)**2 + (float(steps_executed_succesfully)/schedules_total_length)**2
 
         elif "goal" in target:
             try:
                 mock_goals[target].receive_inventory(mock_robots[robot_id].transfer_inventory())
 
-            except customexceptions.SimulationError as err:
+            except SimulationError as err:
                 return -1 + (float(correct_pickups_so_far) / order_total_items)**2 + (float(steps_executed_succesfully)/schedules_total_length)**2
 
             order1 = return_equivalent_full_order([order_to_fulfill],
@@ -261,7 +259,7 @@ class GAHandler:
         self._shelf_item_mapping = {}
         self._order = None
         self._robot_max_inv = 3
-        self._distance_graph = {}
+        self._positions = {}
 
     def set_genes(self, all_gene_strings):
         self._all_gene_strings = all_gene_strings
@@ -271,8 +269,9 @@ class GAHandler:
 
     def get_int_genes(self):
         return self._all_gene_ints
-    def set_distance_graph(self, graph):
-        self._distance_graph = graph
+
+    def set_positions(self, positions):
+        self._positions = positions
 
     def set_shelf_item_mapping(self, mapping):
         self._shelf_item_mapping = mapping
@@ -295,15 +294,8 @@ class GAHandler:
     def get_distance_between(self, name1, name2):
         if name1 == name2:
             return 0
-        if (name1, name2) not in self._distance_graph.keys():
-            if (name2, name1) not in self._distance_graph.keys():
-                tup = [name2, name1]
-                print("%s not in distance graph" % tup)
-                return None
-            else:
-                return self._distance_graph[(name2, name1)]
-        else:
-            return self._distance_graph[(name1, name2)]
-
-
-
+        pos1 = self._positions.get(name1)
+        pos2 = self._positions.get(name2)
+        if pos1 is None or pos2 is None:
+            return None
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])

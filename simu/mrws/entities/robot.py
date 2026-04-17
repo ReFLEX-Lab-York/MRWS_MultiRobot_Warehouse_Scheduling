@@ -1,13 +1,12 @@
 import random
-
-import udptransmit
-import entitywithinventory
 import math
-import shelf
-import orderstation
-import customexceptions
+from collections import deque
 
-class Robot(entitywithinventory.InventoryEntity):
+from mrws.io import udp
+from mrws.entities.inventory import InventoryEntity
+from mrws.exceptions import SimulationError
+
+class Robot(InventoryEntity):
     def __init__(self, name: str, x: int, y: int, max_inv_size: int, fault_rates: list):
         self._x = x
         self._y = y
@@ -15,7 +14,7 @@ class Robot(entitywithinventory.InventoryEntity):
         self._home_y = y
         self.wait_steps = 0
         self._assigned_order = None
-        self._movement_path = []
+        self._movement_path = deque()
         self._current_target = None
         self._steps_halted = 0
         self._prio = None
@@ -84,7 +83,7 @@ class Robot(entitywithinventory.InventoryEntity):
 
     def set_position(self, x, y):
         if self.wait_steps != 0:
-            raise customexceptions.SimulationError("Cannot move a robot that is waiting")
+            raise SimulationError("Cannot move a robot that is waiting")
         self._steps_halted = 0
         self._x = x
         self._y = y
@@ -98,7 +97,7 @@ class Robot(entitywithinventory.InventoryEntity):
         return self._steps_halted
 
     def set_movement_path(self, path):
-        self._movement_path = path
+        self._movement_path = deque(path) if not isinstance(path, deque) else path
 
     def get_movement_path(self):
         return self._movement_path
@@ -114,7 +113,7 @@ class Robot(entitywithinventory.InventoryEntity):
     def interact_with_target(self):
         if self.get_position() != self._current_target.get_position():
             message = "Robot %s tried to interact with object %s, when they were not occupying the same cell."
-            raise customexceptions.SimulationError(message % (self._name, self._current_target.get_name()))
+            raise SimulationError(message % (self._name, self._current_target.get_name()))
 
         self._current_target.interact(self)
 
@@ -134,7 +133,7 @@ class Robot(entitywithinventory.InventoryEntity):
         return self._name
 
     def transmit_creation(self):
-        udptransmit.transmit_robot_creation(self._name, self._x, self._y)
+        udp.transmit_robot_creation(self._name, self._x, self._y)
 
     def maybe_introduce_fault(self):
         # Battery fault - 2 types:

@@ -1,19 +1,18 @@
 import math
 import random
-
-import customexceptions
-import item
-import udptransmit
-import shelf
-import orderstation
-import robot
-import heapq
-import utils
-import ordermanager
-import scheduler
-import robothome
 import time
-from dataclasses import dataclass, field
+
+from mrws.exceptions import SimulationError
+from mrws.models.item import Item
+from mrws.io import udp
+from mrws.entities.shelf import Shelf
+from mrws.entities.order_station import OrderStation
+from mrws.entities.robot import Robot
+from mrws.entities.home import RobotHome
+from mrws.engine.order_manager import OrderManager
+from mrws.scheduling.scheduler import Scheduler
+from mrws.engine.pathfinding import compute_astar_path
+from mrws.engine import deadlock
 
 class Warehouse:
     def __init__(self, w_house_filename: str, num_items: int, robot_max_inventory: int, schedule_mode: str,
@@ -26,43 +25,81 @@ class Warehouse:
         self._order_stations = {}
         self._shelves = {}
         self._homes = {}
+        self._position_to_robot = {}
 
         self._robot_fault_rates = robot_fault_rates
+        self._robot_max_inventory = robot_max_inventory
 
+        # Generate items first (parse_warehouse_file assigns them to shelves)
         self._items = {}
         self._NUM_ITEMS = num_items
-        udptransmit.transmit_start()
+        udp.transmit_start()
         self.generate_items(self._NUM_ITEMS)
-        self._dynamic_deadline = 100
 
-        self._order_manager = ordermanager.OrderManager(5, 5, self._items,
-                                                        self._dynamic_deadline)
-
-        self._robot_max_inventory = robot_max_inventory
-        # Warehouse cell (x,y) is accessed via self._cells[y][x]
+        # Parse warehouse so entity counts are known before creating orders
         self._cells = self.parse_warehouse_file(w_house_filename)
+        self._width = len(self._cells[0])
+        self._height = len(self._cells)
 
-        self._scheduler = scheduler.Scheduler(self._order_manager,
+        # Derive order parameters from warehouse contents
+        num_robots = len(self._robots)
+        num_goals = len(self._order_stations)
+        num_shelves = len(self._shelves)
+
+        # Order size: bounded by robot inventory and shelf count
+        order_size = max(1, min(robot_max_inventory, num_shelves))
+        max_orders = max(1, num_shelves // order_size)
+
+        # Initial orders: at least num_robots so every robot can get a task
+        num_init_orders = min(max(num_robots, num_goals * 2), max_orders)
+
+        # Dynamic orders: scale with goals, capped by remaining capacity
+        num_dynamic_orders = max(1, min(num_goals, max_orders - num_init_orders))
+        num_dynamic_orders = max(0, num_dynamic_orders)
+
+        # Dynamic deadline: scale with warehouse area and entity counts
+        self._dynamic_deadline = max(100, (self._width + self._height) * num_shelves // max(num_robots, 1))
+
+        self._order_manager = OrderManager(num_init_orders, num_dynamic_orders,
+                                           self._items, self._dynamic_deadline,
+                                           order_size)
+
+        self._scheduler = Scheduler(self._order_manager,
                                               self._robots, self._shelves, self._order_stations,
                                               self._homes, self._order_manager.get_init_orders(),
                                               schedule_mode,
                                               self._robot_max_inventory, self._fault_tolerant_mode)
         self._scheduler.schedule(1)
 
-        self._width = len(self._cells[0])
-        self._height = len(self._cells)
-
         self.transmit_initial_warehouse_layout()
         self._total_steps = 0
         self._step_limit = step_limit
 
         self.sensor_faulty_bots = {}
+        self._faulty_blocked_cells = set()
+
+    def _recompute_faulty_blocked_cells(self):
+        self._faulty_blocked_cells = set()
+        for faulty_robot in self.sensor_faulty_bots.values():
+            pos = faulty_robot.get_position()
+            self._faulty_blocked_cells.add((pos[0] + 1, pos[1]))
+            self._faulty_blocked_cells.add((pos[0] - 1, pos[1]))
+            self._faulty_blocked_cells.add((pos[0], pos[1] + 1))
+            self._faulty_blocked_cells.add((pos[0], pos[1] - 1))
 
     def step(self):
         self._total_steps = self._total_steps + 1
 
         if self._total_steps > self._step_limit:
-            raise customexceptions.SimulationError("Simulation still running after step limit")
+            raise SimulationError("Simulation still running after step limit")
+
+        # Precompute faulty blocked cells once per step
+        if self.sensor_faulty_bots:
+            self._recompute_faulty_blocked_cells()
+        else:
+            self._faulty_blocked_cells = set()
+
+        self._needs_reschedule = False
 
         # ============================================UPDATE ROBOTS====================================================
         for robot_obj in self._robots.values():
@@ -70,24 +107,17 @@ class Warehouse:
             fault_list = robot_obj.maybe_introduce_fault()
             self.apply_fault_actions(robot_obj, fault_list)
 
-
-
             # Robots should only take action if they are not waiting
             if robot_obj.get_wait_steps() == 0:
-                #print("Updating robot %s" % robot_obj.get_name())
-                #print("At (%s %s)" % (robot_obj.get_position()[0], robot_obj.get_position()[1]))
-                #print("Has target %s" % robot_obj.get_target())
                 self.decide_robot_action(robot_obj)
             else:
-                #print("Robot %s waited a step" % robot_obj.get_name())
                 should_schedule = robot_obj.decrement_wait_steps()
                 if should_schedule:
-                    self._scheduler.schedule(self._total_steps)
-            #self.print_layout_simple()
-            #print(self._scheduler._orders_active)
-            #print(self._scheduler._orders_backlog)
-            #for value in self._order_stations.values():
-                #print(value.report_inventory())
+                    self._needs_reschedule = True
+
+        # Batch deferred schedule calls
+        if self._needs_reschedule:
+            self._scheduler.schedule(self._total_steps)
 
         # ============================================ADD DYNAMIC ORDERS==============================================
         new_order = self._order_manager.possibly_introduce_dynamic_order(self._total_steps)
@@ -118,7 +148,7 @@ class Warehouse:
 
         if robot_obj.get_target() is not None:
             # If the robot is traveling towards its home, it should still be treated as idle and available to schedule
-            if (type(robot_obj.get_target()) is robothome.RobotHome and not
+            if (type(robot_obj.get_target()) is RobotHome and not
                     robot_obj.battery_faulted and not robot_obj.gone_home_to_clear_inv):
                 # Check if the scheduler has a new job for this robot yet
                 #print("Robot is waiting for direction, while travelling home")
@@ -139,7 +169,7 @@ class Warehouse:
             #print("Robot is waiting for direction")
             self._scheduler.direct_robot(robot_obj)
 
-    def apply_fault_actions(self, robot_obj: robot.Robot, fault_list):
+    def apply_fault_actions(self, robot_obj: Robot, fault_list):
         if not fault_list:
             return
         if fault_list[0]:
@@ -153,7 +183,7 @@ class Warehouse:
             self.sensor_faulty_bots[robot_obj.get_name()] = robot_obj
             robot_obj.add_wait_steps(2)
         if True in fault_list:
-            self._scheduler.schedule(self._total_steps)
+            self._needs_reschedule = True
 
     def get_total_steps(self):
         return self._total_steps
@@ -179,20 +209,10 @@ class Warehouse:
         return self.cell_contains_robot(x, y) or is_near_faulty_robot
 
     def cell_contains_robot(self, x, y):
-        return "robot" in "".join(self._cells[y][x])
+        return (x, y) in self._position_to_robot
 
     def cell_within_faulty_robot_move_range(self, x, y):
-        for faulty_robot_name, faulty_robot in self.sensor_faulty_bots.items():
-            pos = faulty_robot.get_position()
-            possible_next_positions = [(pos[0] + 1, pos[1]),
-                                       (pos[0] - 1, pos[1]),
-                                       (pos[0], pos[1] + 1),
-                                       (pos[0], pos[1] - 1)]
-            if (x, y) in possible_next_positions:
-                return True
-        return False
-
-
+        return (x, y) in self._faulty_blocked_cells
 
     def move_robot_towards_astar_collision_detect(self, robot_obj):
         # If the robot has no planned path when we ask it to move, it should try and compute one
@@ -255,174 +275,14 @@ class Warehouse:
                 is_horizontal = (blocking_robot.get_position()[0] - robot_obj.get_position()[0]) != 0
                 self.move_robot_break_deadlock(robot_obj, robots_by_prio, is_horizontal)
 
-    def attempt_resolve_deadlocks(self, robot_obj):
-        robot_target = robot_obj.get_target()
-        self.resolve_boxed_in_deadlock(robot_obj, robot_target.get_position()[0], robot_target.get_position()[1])
-
-        keep_searching = True
-        loop_found = False
-        next_robot = self.get_robot_at(robot_target.get_position()[0], robot_target.get_position()[1])
-        robots_searched = [robot_obj]
-        if next_robot is not None:
-            while keep_searching:
-                robots_searched.append(next_robot)
-                robot_target = next_robot.get_target()
-                if robot_target is None:
-                    break
-                if robot_target.get_position() == next_robot.get_position():
-                    break
-                next_robot = self.get_robot_at(robot_target.get_position()[0], robot_target.get_position()[1])
-                if next_robot is None:
-                    break
-                elif next_robot == robot_obj:
-                    #print("CYCLIC DEADLOCK FOUND CONCERNING THIS ROBOT - OF SIZE %s" % (len(robots_searched)))
-                    #print("Positions")
-                    loop_found = True
-                    keep_searching = False
-                elif next_robot in robots_searched:
-                    break
-        if loop_found:
-            robots_by_prio = reversed(sorted(robots_searched, key=lambda robot2: robot2.get_prio()))
-            self.move_robot_break_deadlock(robot_obj, robots_by_prio)
-
-    def get_robot_at(self, x, y):
-        cell = self._cells[y][x]
-        robot_name = None
-        for obj_name in cell:
-            if "robot" in obj_name:
-                robot_name = obj_name
-        if robot_name is None:
-            return None
-        return self._robots[robot_name]
-
-    def move_robot_break_deadlock(self, this_robot, robots, prioritise_vertical=False):
-        for robo in robots:
-            if robo.get_wait_steps() != 0:
-                continue
-            if robo.get_target() is None:
-                continue
-
-            p = robo.get_position()
-
-            vertical = [(p[0], p[1] + 1),
-                        (p[0], p[1] - 1)]
-
-            horizontal = [(p[0] + 1, p[1]),
-                          (p[0] - 1, p[1])]
-
-            offsets = horizontal + vertical
-
-            if prioritise_vertical:
-                offsets = vertical + horizontal
-
-            for off in offsets:
-                if not self.is_within_grid(off[0], off[1]):
-                    continue
-                if not self.cell_is_full(off[0], off[1]):
-                    self.update_robot_position(robo.get_name(), off[0], off[1])
-                    robo.set_movement_path(self.compute_robot_astar_path(robo))
-                    if robo != this_robot:
-                        robo.add_wait_steps(1)
-                    return True
-        return False
-
-    def move_robots_away_from(self, x, y, robots):
-        for robo in robots:
-            if robo.get_wait_steps() != 0:
-                continue
-            x_change = robo.get_position()[0] - x
-            y_change = robo.get_position()[1] - y
-            new_x = robo.get_position()[0] + x_change
-            new_y = robo.get_position()[1] + y_change
-            if not self.is_within_grid(new_x, new_y):
-                continue
-            if not self.cell_is_full(new_x, new_y):
-                if robo.get_target() is not None:
-                    self.update_robot_position(robo.get_name(), new_x, new_y)
-                    robo.set_movement_path(self.compute_robot_astar_path(robo))
-                    robo.add_wait_steps(1)
-                    return True
-        return False
-
-    def resolve_boxed_in_deadlock(self, robot_obj, x, y):
-        offsets = [(x + 1, y),
-                   (x - 1, y),
-                   (x, y + 1),
-                   (x, y - 1)]
-        blocking_robots = []
-        for off in offsets:
-            if not self.is_within_grid(off[0], off[1]):
-                continue
-            if self.cell_contains_robot(off[0], off[1]):
-                found_robot = self.get_robot_at(off[0], off[1])
-                if found_robot.get_target() is None:
-                    return
-                if found_robot is not None:
-                    blocking_robots.append(found_robot)
-            else:
-                return
-
-        if len(blocking_robots) == 0:
-            message = "An inaccessible target was located at (%s,%s)" % (x, y)
-            raise customexceptions.SimulationError(message)
-
-        #print("BOXED IN TARGET DETECTED")
-        robots_by_prio = reversed(sorted(blocking_robots, key=lambda robot2: robot2.get_prio()))
-        result = self.move_robots_away_from(x, y, robots_by_prio)
-
     def compute_robot_astar_path(self, robot_obj):
-        robot_x, robot_y = robot_obj.get_position()
-        target_x, target_y = robot_obj.get_target().get_position()
-
-        @dataclass(order=True)
-        class PrioNode:
-            x: int = field(compare=False)
-            y: int = field(compare=False)
-            f_score: int
-
-            def __eq__(self, other):
-                return self.x == other.x and self.y == other.y
-        g_scores = {}
-        f_scores = {}
-        came_from = {}
-        search_frontier = []
-        f_scores[(robot_x, robot_y)] = utils.taxicab_dist(robot_x, robot_y, target_x, target_y)
-        g_scores[(robot_x, robot_y)] = 0
-        heapq.heappush(search_frontier,
-                       PrioNode(robot_x, robot_y, f_scores[(robot_x, robot_y)]))
-        while len(search_frontier) != 0:
-            current = heapq.heappop(search_frontier)
-            if current.x == target_x and current.y == target_y:
-                # We don't need the first element of the path, that's where we already are
-                return utils.reconstruct_astar_path(came_from, (current.x, current.y))[1:]
-
-            offsets = [(current.x + 1, current.y),
-                       (current.x - 1, current.y),
-                       (current.x, current.y + 1),
-                       (current.x, current.y - 1)]
-
-            # Search each neighbour
-            for n in offsets:
-                if not self.is_within_grid(n[0], n[1]):
-                    continue
-                neigh_tup = (n[0], n[1])
-                cur_tup = (current.x, current.y)
-                if not self.cell_contains_robot(n[0], n[1]):
-                    possible_g_score = g_scores[cur_tup] + 1
-                    if neigh_tup in g_scores.keys():
-                        if not possible_g_score < g_scores[neigh_tup]:
-                            continue
-                    came_from[neigh_tup] = cur_tup
-                    g_scores[neigh_tup] = possible_g_score
-                    f_scores[neigh_tup] = possible_g_score + utils.taxicab_dist(current.x, current.y,
-                                                                                target_x, target_y)
-                    if PrioNode(n[0], n[1], 0) not in search_frontier:
-                        heapq.heappush(search_frontier,
-                                       PrioNode(n[0], n[1], f_scores[neigh_tup]))
-        return []
+        return compute_astar_path(
+            self._width, self._height, self._position_to_robot,
+            robot_obj.get_position(), robot_obj.get_target().get_position()
+        )
 
     def transmit_initial_warehouse_layout(self):
-        udptransmit.transmit_warehouse_size(self._width, self._height)
+        udp.transmit_warehouse_size(self._width, self._height)
         for row in self._cells:
             for cell in row:
                 for obj_name in cell:
@@ -478,10 +338,9 @@ class Warehouse:
         cells_copy = []
         lines = []
 
-        f = open(filename, "r")
-        for line_raw in f:
-            lines.append(line_raw.strip())
-        f.close()
+        with open(filename, "r") as f:
+            for line_raw in f:
+                lines.append(line_raw.strip())
 
         for line in list(reversed(lines)):
             width = len(line)
@@ -495,31 +354,35 @@ class Warehouse:
             for char in line:
                 if char == "R":
                     new_robot_name = "robot%s" % robot_name_ctr
-                    new_robot = robot.Robot(new_robot_name, col_ctr, row_ctr, self._robot_max_inventory,
+                    new_robot = Robot(new_robot_name, col_ctr, row_ctr, self._robot_max_inventory,
                                             self._robot_fault_rates)
                     self._robots[new_robot_name] = new_robot
 
                     new_home_name = "home%s" % robot_name_ctr
-                    new_home = robothome.RobotHome(new_home_name, new_robot_name, col_ctr, row_ctr)
+                    new_home = RobotHome(new_home_name, new_robot_name, col_ctr, row_ctr)
                     self._homes[new_home_name] = new_home
 
                     cells_copy[row_ctr].append([new_robot_name, new_home_name])
+                    self._position_to_robot[(col_ctr, row_ctr)] = new_robot_name
                     robot_name_ctr = robot_name_ctr + 1
                 elif char == "S":
                     new_shelf_name = "shelf%s" % shelf_name_ctr
                     possible_item_name = "item%s" % shelf_name_ctr
 
                     if possible_item_name in self._items.keys():
-                        new_shelf = shelf.Shelf(col_ctr, row_ctr, new_shelf_name, self._items[possible_item_name])
+                        new_shelf = Shelf(col_ctr, row_ctr, new_shelf_name, self._items[possible_item_name])
                     else:
-                        new_shelf = shelf.Shelf(col_ctr, row_ctr, new_shelf_name)
+                        new_shelf = Shelf(col_ctr, row_ctr, new_shelf_name)
                     self._shelves[new_shelf_name] = new_shelf
 
                     cells_copy[row_ctr].append([new_shelf_name])
                     shelf_name_ctr = shelf_name_ctr + 1
                 elif char == "G":
                     new_goal_name = "goal%s" % goal_name_ctr
-                    new_goal = orderstation.OrderStation(col_ctr, row_ctr, new_goal_name, self)
+                    new_goal = OrderStation(col_ctr, row_ctr, new_goal_name,
+                                                        lambda: self._scheduler,
+                                                        lambda: self._order_manager,
+                                                        lambda: self._total_steps)
                     self._order_stations[new_goal_name] = new_goal
 
                     cells_copy[row_ctr].append([new_goal_name])
@@ -535,30 +398,35 @@ class Warehouse:
         return cells_copy
 
     def transmit(self):
-        udptransmit.transmit_warehouse_size(self._width, self._height)
+        udp.transmit_warehouse_size(self._width, self._height)
 
     def generate_items(self, num_items):
         for i in range(num_items):
             item_name = "item%s" % i
-            self._items[item_name] = item.Item(item_name, i)
-            udptransmit.transmit_item_existence(item_name)
+            self._items[item_name] = Item(item_name, i)
+            udp.transmit_item_existence(item_name)
 
     def move_robot_next_path_spot(self, robot_obj):
         next_spot = robot_obj.get_movement_path()[0]
         self.update_robot_position(robot_obj.get_name(), next_spot[0], next_spot[1])
-        robot_obj.get_movement_path().pop(0)
+        robot_obj.get_movement_path().popleft()
 
     def update_robot_position(self, robot_name, new_x, new_y):
         if self.cell_contains_robot(new_x, new_y):
-            raise customexceptions.SimulationError("Two robots collided at (%s,%s)" % (new_x, new_y))
+            raise SimulationError("Two robots collided at (%s,%s)" % (new_x, new_y))
 
         robot_obj = self._robots[robot_name]
         old_x, old_y = robot_obj.get_position()
         robot_obj.set_position(new_x, new_y)
         self._cells[old_y][old_x].remove(robot_name)
         self._cells[new_y][new_x].append(robot_name)
-        udptransmit.transmit_robot_position(robot_name, new_x, new_y)
+        del self._position_to_robot[(old_x, old_y)]
+        self._position_to_robot[(new_x, new_y)] = robot_name
+        udp.transmit_robot_position(robot_name, new_x, new_y)
 
-
-
-
+    # Attach deadlock methods
+    attempt_resolve_deadlocks = deadlock.attempt_resolve_deadlocks
+    get_robot_at = deadlock.get_robot_at
+    move_robot_break_deadlock = deadlock.move_robot_break_deadlock
+    move_robots_away_from = deadlock.move_robots_away_from
+    resolve_boxed_in_deadlock = deadlock.resolve_boxed_in_deadlock

@@ -1,16 +1,16 @@
-import item
-import udptransmit
+from mrws.models.item import Item
+from mrws.io import udp
 
 
 class Shelf:
-    def __init__(self, x_pos: int, y_pos: int, name: str, item_type: item.Item = None):
+    def __init__(self, x_pos: int, y_pos: int, name: str, item_type: Item = None):
         self._x = x_pos
         self._y = y_pos
         self._item = item_type
         self._name = name
 
     def transmit_creation(self):
-        udptransmit.transmit_shelf_creation(self._name, self._item.get_name(), self._x, self._y, )
+        udp.transmit_shelf_creation(self._name, self._item.get_name(), self._x, self._y)
 
     def interact(self, obj):
         obj.add_item_to_inventory(self._item)

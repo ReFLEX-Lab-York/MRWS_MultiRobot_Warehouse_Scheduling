@@ -1,19 +1,37 @@
-import customexceptions
-import warehouse
-import robot
+from mrws.exceptions import SimulationError
+from mrws.engine.warehouse import Warehouse
 import os
 import argparse
 import time
 import statistics
 import shutil
-import random
 import math
 import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import numpy
+import numpy as np
 
 from operator import add
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+DEFAULT_TRANSMIT_DELAY_S = 0.2
+PRIORITY_LEVELS = 5
+
+
 class Simulation:
-    def __init__(self, num_sims:int, whouse:str, num_items:int, inv_size:int, schedule_mode:str, fault_rates, fault_mode, step_limit, side_len = None):
+    def __init__(
+        self,
+        num_sims: int,
+        whouse: str,
+        num_items: int,
+        inv_size: int,
+        schedule_mode: str,
+        fault_rates,
+        fault_mode,
+        step_limit,
+        side_len=None,
+    ):
         self._side_len = side_len
         self._num_sims = num_sims
         self.warehouse_file = whouse
@@ -29,30 +47,52 @@ class Simulation:
         self.step_amounts = []
         self.step_times = []
         self.error_strings = []
-        self.ga_attempts = [0,0,0,0,0]
+        self.ga_attempts = [0, 0, 0, 0, 0]
 
         self.order_prio = []
-        self.order_prio_sorted_completion_time_lists = [[], [], [], [], []]
+        self.order_prio_sorted_completion_time_lists = [[] for _ in range(PRIORITY_LEVELS)]
 
         self.order_completion_steps_by_num_robots = {}
 
+    def _record_order_completion_times(self, simu):
+        orders_to_amount_robots = simu.get_scheduler().get_order_to_amount_of_robots_assigned()
+        order_start_times = simu.get_order_manager().get_order_start_work_times()
+        order_finish_times = simu.get_order_manager().get_order_finish_work_times()
+
+        for order_name, amount_robots in orders_to_amount_robots.items():
+            order_total_time = order_finish_times[order_name] - order_start_times[order_name]
+            self.order_completion_steps_by_num_robots.setdefault(amount_robots, []).append(order_total_time)
+
+    def _record_priority_completion_times(self):
+        for prio, completion_time in self.order_prio:
+            prio_index = prio - 1
+            if 0 <= prio_index < PRIORITY_LEVELS:
+                self.order_prio_sorted_completion_time_lists[prio_index].append(completion_time)
+
     def run_simulation(self, reraise_error, slow_for_transmit):
         for sim_num in range(self._num_sims):
-            print("Starting sim %s" % sim_num)
+            print(f"Starting sim {sim_num}")
             sim_step_times = []
             try:
-                simu = warehouse.Warehouse(self.warehouse_file, self._num_items, self._inv_size,
-                                           self._schedule_mode, self._fault_rates, self._fault_mode, self._step_limit)
+                simu = Warehouse(
+                    self.warehouse_file,
+                    self._num_items,
+                    self._inv_size,
+                    self._schedule_mode,
+                    self._fault_rates,
+                    self._fault_mode,
+                    self._step_limit,
+                )
                 keep_step = True
                 while keep_step:
                     if slow_for_transmit:
-                        time.sleep(0.2)
+                        time.sleep(DEFAULT_TRANSMIT_DELAY_S)
                     before_step_time = time.perf_counter_ns()
                     keep_step = not simu.step()
                     elapsed_time_between = time.perf_counter_ns() - before_step_time
                     sim_step_times.append(elapsed_time_between)
 
-            except customexceptions.SimulationError as err:
+            except SimulationError as err:
                 if reraise_error:
                     raise err
                 self.error_strings.append(err)
@@ -63,163 +103,143 @@ class Simulation:
                 continue
 
             self.step_times.extend(sim_step_times)
-
             self.step_amounts.append(simu.get_total_steps())
-            self.order_prio = self.order_prio + simu.get_order_manager().return_mapping_prio_to_completion_times()
+            self.order_prio.extend(simu.get_order_manager().return_mapping_prio_to_completion_times())
             self.ga_attempts = list(map(add, simu.get_scheduler().get_ga_attempts(), self.ga_attempts))
-
-            orders_to_amount_robots = simu.get_scheduler().get_order_to_amount_of_robots_assigned()
-            order_start_times = simu.get_order_manager().get_order_start_work_times()
-            order_finish_times = simu.get_order_manager().get_order_finish_work_times()
-
-            for order_name in orders_to_amount_robots.keys():
-                order_total_time = order_finish_times[order_name] - order_start_times[order_name]
-                amount_robots = orders_to_amount_robots[order_name]
-                if amount_robots not in self.order_completion_steps_by_num_robots.keys():
-                    self.order_completion_steps_by_num_robots[amount_robots] = [order_total_time]
-                else:
-                    self.order_completion_steps_by_num_robots[amount_robots].append(order_total_time)
-
+            self._record_order_completion_times(simu)
             self.num_robots = simu.get_number_of_robots()
 
-        for prio_num in range(5):
-            for order_list in self.order_prio:
-                if order_list[0] == prio_num + 1:
-                    self.order_prio_sorted_completion_time_lists[prio_num].append(order_list[1])
+        self._record_priority_completion_times()
 
     def print_priority_info(self):
-        import matplotlib.pyplot as plt
-        import numpy as np
-        fig = plt.figure(figsize=(8,8))
+        plt.figure(figsize=(8, 8))
 
-        for j in range(5):
+        for j in range(PRIORITY_LEVELS):
             if self.order_prio_sorted_completion_time_lists[j]:
                 sel = self.order_prio_sorted_completion_time_lists[j]
-                print("Average amount of steps for prio %s completion: %s" % (j + 1, statistics.mean(sel)))
+                print(f"Average amount of steps for prio {j + 1} completion: {statistics.mean(sel)}")
         plt.boxplot(self.order_prio_sorted_completion_time_lists)
 
         ax = plt.gca()
-        plt.title("Order prioritisation statistics for scheduling algorithm %s" % self._schedule_mode)
+        plt.title(f"Order prioritisation statistics for scheduling algorithm {self._schedule_mode}")
         ax.set_xlabel("Order priority")
         ax.set_ylabel("Amount of steps to complete order after introduction")
 
         plt.show()
 
     def print_num_robots_info(self):
-        for amount_bots in self.order_completion_steps_by_num_robots.keys():
-            print("Average amount of time taken for an order with %s bots: %s" % (
-                amount_bots, statistics.mean(self.order_completion_steps_by_num_robots[amount_bots])))
+        for amount_bots, completion_times in self.order_completion_steps_by_num_robots.items():
+            print(f"Average amount of time taken for an order with {amount_bots} bots: {statistics.mean(completion_times)}")
 
     def print_error_info(self):
         for err in self.error_strings:
             print(err)
-        print("%s simulations faulted critically." % len(self.error_strings))
+        print(f"{len(self.error_strings)} simulations faulted critically.")
         return self.error_strings
 
     def print_steps_taken(self):
-        print("Simulation %s took an average of %s steps" % (self._schedule_mode, statistics.mean(self.step_amounts)))
+        print(f"Simulation {self._schedule_mode} took an average of {statistics.mean(self.step_amounts)} steps")
         return self.step_amounts
 
     def print_step_time_info(self):
-        print("Max step time %sms, Min step time %sms" % (max(self.step_times) / 10**6, min(self.step_times) / 10**6))
-        print("Mean step time %sms" % (statistics.mean(self.step_times) / 10**6))
+        max_step_ms = max(self.step_times) / 10**6
+        min_step_ms = min(self.step_times) / 10**6
+        mean_step_ms = statistics.mean(self.step_times) / 10**6
+        print(f"Max step time {max_step_ms}ms, Min step time {min_step_ms}ms")
+        print(f"Mean step time {mean_step_ms}ms")
 
-        return [self.num_robots, self._side_len, statistics.mean(self.step_times) / 10**6]
-
-
-def gen_nxn_warehouse(robot_num, side_len):
-    robots_left_to_place = robot_num
-    goals_left_to_place = robot_num
-    filename = "wt%sx%sr%s.txt" % (side_len, side_len, robot_num)
-    f = open(filename, "a")
-
-    lines = []
-
-    if robots_left_to_place <= side_len - 2:
-        robot_section = ["R" for i in range(robots_left_to_place)]
-        left_section = ["X" for i in range(side_len - 2 - robots_left_to_place)]
-        middle_section = ''.join(robot_section) + ''.join(left_section)
-        robots_left_to_place = 0
-    else:
-        middle_section = ''.join(["R" for i in range(side_len - 2)])
-        robots_left_to_place = robots_left_to_place - (side_len - 2)
-
-    first_line = "X%sX\n" % middle_section
+        return [self.num_robots, self._side_len, mean_step_ms]
 
 
-    if goals_left_to_place <= side_len - 2:
-        goal_section = ["G" for i in range(goals_left_to_place)]
-        left_section = ["X" for i in range(side_len - 2 - goals_left_to_place)]
-        middle_section = ''.join(goal_section) + ''.join(left_section)
-        goals_left_to_place = 0
-    else:
-        middle_section = ''.join(["G" for i in range(side_len - 2)])
-        goals_left_to_place = goals_left_to_place - (side_len - 2)
+def gen_nxn_warehouse(robot_num, side_len, num_items=12, output_dir=None):
+    if output_dir is None:
+        output_dir = DATA_DIR
+    filename = os.path.join(output_dir, f"wt{side_len}x{side_len}r{robot_num}.txt")
 
-    last_line = "X%sX" % middle_section
+    # Build grid as 2D list of characters, all empty initially
+    grid = [['X'] * side_len for _ in range(side_len)]
 
-    lines.append(first_line)
+    # Place robots in top rows, filling row by row (cols 1..side_len-2)
+    robots_placed = 0
+    usable_cols = side_len - 2  # leave first and last column free
+    robot_rows_needed = math.ceil(robot_num / usable_cols)
+    for r in range(robot_rows_needed):
+        for c in range(1, side_len - 1):
+            if robots_placed >= robot_num:
+                break
+            grid[r][c] = 'R'
+            robots_placed += 1
 
-    for i in range(side_len - 2):
-        line = ''.join(["X" for i in range(side_len)]) + "\n"
-        lines.append(line)
+    if robots_placed < robot_num:
+        raise Exception(f"Not enough space for {robot_num} robots in a {side_len}x{side_len} warehouse")
 
-    lines.append(last_line)
+    # Place goals in bottom rows, filling row by row from the bottom (cols 1..side_len-2)
+    goals_placed = 0
+    goals_needed = max(robot_num, 1)
+    goal_rows_needed = math.ceil(goals_needed / usable_cols)
+    for r in range(goal_rows_needed):
+        row_idx = side_len - 1 - r
+        for c in range(1, side_len - 1):
+            if goals_placed >= goals_needed:
+                break
+            grid[row_idx][c] = 'G'
+            goals_placed += 1
 
-    for i in range(robots_left_to_place):
-        lines[i+1] = "R" + lines[i+1][1:]
-        lines[len(lines) - 2 - i] = lines[len(lines) - 2 - i][:-2] + "G\n"
-        if i+1 == side_len - 1:
-            raise Exception("not enough space for that amount of robots")
+    # Interior region for shelves: between robot rows and goal rows
+    shelf_start_row = robot_rows_needed + 1  # +1 for corridor
+    shelf_end_row = side_len - 1 - goal_rows_needed - 1  # -1 for corridor
 
-    middle_index = ((side_len + 1) // 2) - 1
-    one_above = middle_index - 1
-    one_below = middle_index + 1
+    # Place shelves in alternating columns (shelf column, corridor column)
+    shelves_placed = 0
+    for c in range(2, side_len - 2):
+        if shelves_placed >= num_items:
+            break
+        # Alternating: even offset columns get shelves, odd are corridors
+        if (c - 2) % 2 != 0:
+            continue
+        for r in range(shelf_start_row, shelf_end_row + 1):
+            if shelves_placed >= num_items:
+                break
+            grid[r][c] = 'S'
+            shelves_placed += 1
 
-    spacing = ''.join(["X" for i in range((side_len - 7) // 2)])
+    if shelves_placed < num_items:
+        raise Exception(f"Not enough space for {num_items} shelves in a {side_len}x{side_len} warehouse")
 
-    lines[one_above] = lines[one_above][0] + spacing + "SSXSS" + spacing + lines[one_above][-2] + "\n"
-    lines[middle_index] = lines[middle_index][0] + spacing + "SSXSS" + spacing + lines[middle_index][-2] + "\n"
-    lines[one_below] = lines[one_below][0] + spacing + "SSXSS" + spacing + lines[one_below][-2] + "\n"
-
-    for line in lines:
-        f.write(line)
-
-    f.close()
+    with open(filename, "w") as f:
+        for r in range(side_len):
+            line = ''.join(grid[r])
+            if r < side_len - 1:
+                line += "\n"
+            f.write(line)
 
     return filename
 
-def run_simulation_performance_test(scheduling_mode:str, robots_max:int, size_max:int, step_limit:int):
-    try:
-        os.makedirs("tmp")
-    except FileExistsError:
-        shutil.rmtree("tmp")
-        os.makedirs("tmp")
-    os.chdir("tmp")
+def run_simulation_performance_test(scheduling_mode: str, robots_max: int, size_max: int, step_limit: int):
+    tmp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp")
+    if os.path.isdir(tmp_dir):
+        shutil.rmtree(tmp_dir)
+    os.makedirs(tmp_dir)
+
     results = []
     by_sim_size = []
     ctr = 0
-    for i in range(7, size_max, 2):
+    for side_len in range(7, size_max, 2):
         by_sim_size.append([])
-        for j in range(1, robots_max+1):
-            print("starting %s %s" % (j, i))
-            file_name = gen_nxn_warehouse(j, i)
+        for robot_count in range(1, robots_max + 1):
+            print(f"starting {robot_count} {side_len}")
+            file_name = gen_nxn_warehouse(robot_count, side_len, 12, output_dir=tmp_dir)
             sim_1 = Simulation(10, file_name, 12, 3, scheduling_mode,
-                     [0, 0, 0, 0], True, step_limit, i)
+                     [0, 0, 0, 0], True, step_limit, side_len)
             sim_1.run_simulation(False, False)
-            results.append(sim_1.print_step_time_info())
-            by_sim_size[ctr].append(sim_1.print_step_time_info())
+            sim_result = sim_1.print_step_time_info()
+            results.append(sim_result)
+            by_sim_size[ctr].append(sim_result)
         ctr += 1
     print(results)
 
-    import numpy
-    import matplotlib.pyplot as plt
-    import matplotlib
-    import matplotlib.ticker as ticker
-    from mpl_toolkits.mplot3d import proj3d
-
     res = numpy.array(results)
-    fig = plt.figure(figsize=(8,8))
+    fig = plt.figure(figsize=(8, 8))
     ax = fig.add_subplot(111, projection='3d')
     x = res[:, 0]
     y = res[:, 1]
@@ -245,16 +265,16 @@ def run_simulation_performance_test(scheduling_mode:str, robots_max:int, size_ma
 
 
 def run_completion_time_test(fault_rates):
-    sim = Simulation(500, "whouse2.txt", 10, 3, "simple",
+    sim = Simulation(500, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "simple",
                      fault_rates, True, 1000)
 
-    sim_1 = Simulation(500, "whouse2.txt", 10, 3, "simple-interrupt",
+    sim_1 = Simulation(500, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "simple-interrupt",
                        fault_rates, True, 1000)
 
-    sim_2 = Simulation(500, "whouse2.txt", 10, 3, "multi-robot",
+    sim_2 = Simulation(500, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "multi-robot",
                        fault_rates, True, 1000)
 
-    sim_3 = Simulation(500, "whouse2.txt", 10, 3, "multi-robot-genetic",
+    sim_3 = Simulation(500, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, "multi-robot-genetic",
                        fault_rates, True, 1000)
 
     sim.run_simulation(False, False)
@@ -263,9 +283,6 @@ def run_completion_time_test(fault_rates):
     sim_3.run_simulation(False, False)
 
     steps = [sim.print_steps_taken(), sim_1.print_steps_taken(), sim_2.print_steps_taken(), sim_3.print_steps_taken()]
-
-    import matplotlib.pyplot as plt
-    import numpy as np
 
     fig = plt.figure(figsize=(8, 8))
     plt.boxplot(steps)
@@ -276,14 +293,27 @@ def run_completion_time_test(fault_rates):
     ax.set_ylabel("Amount of steps")
     plt.show()
 
+def _count_error_types(errors):
+    error_types = [len(errors), 0, 0, 0]
+    for error_message in errors:
+        message = str(error_message)
+        if "collided" in message:
+            error_types[1] += 1
+        if "limit" in message:
+            error_types[3] += 1
+        if "empty" in message or "violated" in message:
+            error_types[2] += 1
+    return error_types
+
+
 def run_fault_test(scheduling_mode):
     faulty = [0.0001, 0.001, 0.001, 0.001]
     num_sims = 250
 
-    sim = Simulation(num_sims, "whouse2.txt", 10, 3, scheduling_mode,
+    sim = Simulation(num_sims, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, scheduling_mode,
                      faulty, True, 1500)
 
-    sim_1 = Simulation(num_sims, "whouse2.txt", 10, 3, scheduling_mode,
+    sim_1 = Simulation(num_sims, os.path.join(DATA_DIR, "whouse2.txt"), 10, 3, scheduling_mode,
                        faulty, False, 1500)
 
 
@@ -295,28 +325,9 @@ def run_fault_test(scheduling_mode):
     all_errors_1 = sim.print_error_info()
     all_errors_2 = sim_1.print_error_info()
 
-    error_types_1 = [len(all_errors_1),0,0,0]
-    error_types_2 = [len(all_errors_2),0,0,0]
+    error_types_1 = _count_error_types(all_errors_1)
+    error_types_2 = _count_error_types(all_errors_2)
 
-
-    for error_message in all_errors_1:
-        if "collided" in str(error_message):
-            error_types_1[1] += 1
-        if "limit" in str(error_message):
-            error_types_1[3] += 1
-        if "empty" in str(error_message) or "violated" in str(error_message):
-            error_types_1[2] += 1
-
-    for error_message in all_errors_2:
-        if "collided" in str(error_message):
-            error_types_2[1] += 1
-        if "limit" in str(error_message):
-            error_types_2[3] += 1
-        if "empty" in str(error_message) or "violated" in str(error_message):
-            error_types_2[2] += 1
-
-    import matplotlib.pyplot as plt
-    import numpy as np
     types = ("Total Critically Faulted Simulations", "Collisions", "Scheduling Violation", "Overruns")
 
     x = np.arange(len(types))  # the label locations
@@ -337,11 +348,10 @@ def run_fault_test(scheduling_mode):
     ax = fig.gca()
 
     color_ctr = 0
-    for attribute in groups.keys():
-        measurement_1 = groups[attribute]
+    for attribute, measurements in groups.items():
 
         offset = width * multiplier
-        rects = ax.bar(x + offset, measurement_1, width, label=attribute, color=colors[color_ctr])
+        rects = ax.bar(x + offset, measurements, width, label=attribute, color=colors[color_ctr])
         ax.bar_label(rects, padding=3)
         multiplier += 1
         color_ctr += 1
@@ -358,25 +368,85 @@ def run_fault_test(scheduling_mode):
 
 
 
+def run_1000_robot_test():
+    os.environ["ROBOTSIM_TRANSMIT"] = "False"
+    fname = gen_nxn_warehouse(1000, 200, 1000)
+    sim = Simulation(1, fname, 1000, 3, "multi-robot",
+                     [0, 0, 0, 0], True, 5000)
+    t = time.time()
+    sim.run_simulation(True, False)
+    print("1000-robot sim completed in %.1fs" % (time.time() - t))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", action="store_true", help="Whether or not to transmit UDP packets.")
+    parser.add_argument("-t", "--transmit", action="store_true", help="Whether or not to transmit UDP packets.")
+    parser.add_argument(
+        "-n",
+        "--num-sims",
+        type=int,
+        default=1000,
+        help="Number of simulation cycles to run (default: 1000).",
+    )
+    parser.add_argument(
+        "-g",
+        "--gui",
+        action="store_true",
+        help="Launch PyQt6 debug GUI (ignores -n).",
+    )
+    parser.add_argument(
+        "-m",
+        "--mode",
+        type=str,
+        default="simple-interrupt",
+        choices=["simple", "simple-interrupt", "multi-robot", "multi-robot-genetic"],
+        help="Scheduling mode.",
+    )
+    parser.add_argument(
+        "-w",
+        "--warehouse",
+        type=str,
+        default=os.path.join(DATA_DIR, "whouse.txt"),
+        help="Path to warehouse file (default: data/whouse.txt).",
+    )
+    parser.add_argument(
+        "-i",
+        "--items",
+        type=int,
+        default=None,
+        help="Number of items/shelves (default: auto-detect from warehouse file).",
+    )
     args = parser.parse_args()
-    os.environ["ROBOTSIM_TRANSMIT"] = str(args.t)
-    faulty = [0.0001, 0.001, 0.001, 0.001]
+    os.environ["ROBOTSIM_TRANSMIT"] = str(args.transmit)
+
+    # Auto-detect shelf count from the warehouse file if not specified
+    if args.items is None:
+        with open(args.warehouse) as f:
+            args.items = f.read().count('S')
+
     perfect_scenario = [0, 0, 0, 0]
 
-    sim = Simulation(1, "whouse2.txt", 10, 3, "simple-interrupt",
-                     perfect_scenario, True, 1000)
+    if args.gui:
+        from mrws.io.gui import launch_gui
 
-    sim.run_simulation(True,True)
-    #sim.print_priority_info()
+        os.environ["ROBOTSIM_TRANSMIT"] = "False"
 
+        def make_warehouse():
+            return Warehouse(
+                args.warehouse, args.items, 3, args.mode, perfect_scenario, True, 1000,
+            )
 
-
-
-
-
-
-
-
+        simu = make_warehouse()
+        launch_gui(simu, warehouse_factory=make_warehouse)
+    else:
+        sim = Simulation(
+            args.num_sims,
+            args.warehouse,
+            args.items,
+            3,
+            args.mode,
+            perfect_scenario,
+            True,
+            1000,
+        )
+        sim.run_simulation(True, args.transmit)

@@ -1,9 +1,10 @@
-import order
+from mrws.models.order import Order
 import random
 import time
 
 class OrderManager:
-    def __init__(self, num_init_orders: int, num_dynamic_orders: int, item_set: dict, dynamic_deadline:int):
+    def __init__(self, num_init_orders: int, num_dynamic_orders: int, item_set: dict,
+                 dynamic_deadline: int, order_size: int = 4):
         self._num_init_orders = num_init_orders
         self._num_dynamic_orders = num_dynamic_orders
         self._item_set = item_set
@@ -16,7 +17,7 @@ class OrderManager:
         self._order_work_start_times = {}
         self._order_completion_times = {}
         self._all_orders = {}
-        self.generate_orders_uniform(num_init_orders, num_dynamic_orders, 4)
+        self.generate_orders_uniform(num_init_orders, num_dynamic_orders, order_size)
 
         for ordr in self._init_orders:
             self._order_intro_times[ordr.get_id()] = 0
@@ -30,7 +31,7 @@ class OrderManager:
     def set_order_start_work_time(self, order_id, step_value):
         self._order_work_start_times[order_id] = step_value
 
-    def set_order_completion_time(self, ordr: order.Order, step_value:int):
+    def set_order_completion_time(self, ordr: Order, step_value:int):
         self._order_completion_times[ordr.get_id()] = step_value
 
     def generate_orders_uniform(self, num_init_orders: int, num_dynamic_orders: int, order_size: int):
@@ -41,7 +42,7 @@ class OrderManager:
                 selected_item_index = random.randint(0, len(self._item_set.keys()) - 1)
                 current_items.append(self._item_set["item%s" % selected_item_index])
             order_prio = random.randint(1, 5)
-            current_order = order.Order(current_items, order_prio, order_id_ctr)
+            current_order = Order(current_items, order_prio, order_id_ctr)
             self._all_orders[order_id_ctr] = current_order
             self._init_orders.append(current_order)
             order_id_ctr = order_id_ctr + 1
@@ -52,7 +53,7 @@ class OrderManager:
                 selected_item_index = random.randint(0, len(self._item_set.keys()) - 1)
                 current_items.append(self._item_set["item%s" % selected_item_index])
             order_prio = random.randint(1, 5)
-            current_order = order.Order(current_items, order_prio, order_id_ctr)
+            current_order = Order(current_items, order_prio, order_id_ctr)
             self._all_orders[order_id_ctr] = current_order
             self._dynamic_orders.append(current_order)
             order_id_ctr = order_id_ctr + 1
@@ -103,11 +104,3 @@ class OrderManager:
 
     def get_order_finish_work_times(self):
         return self._order_completion_times
-
-
-
-
-
-
-
-
